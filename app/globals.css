@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --nova-bg: #f5f3ed;
+  --nova-surface: #ffffff;
+  --nova-primary: #315f4a;
+  --nova-primary-dark: #214536;
+  --nova-primary-soft: #dce8dd;
+  --nova-sage: #a8bda9;
+  --nova-sand: #e8d8bf;
+  --nova-warm-accent: #c58b62;
+  --nova-text: #242a26;
+  --nova-text-secondary: #777f79;
+  --nova-border: #e6e5de;
+  --nova-success: #4c8062;
+  --nova-warning: #c28b47;
+  --nova-danger: #c76a67;
+}
+
+@theme inline {
+  --color-background: var(--nova-bg);
+  --color-foreground: var(--nova-text);
+  --font-sans: var(--font-inter), var(--font-arabic), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+html,
+body {
+  background-color: var(--nova-bg);
+  color: var(--nova-text);
+  font-family: var(--font-inter), var(--font-arabic), system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+.nova-card-shadow {
+  box-shadow:
+    0 1px 2px rgba(36, 42, 38, 0.04),
+    0 10px 28px -12px rgba(49, 95, 74, 0.12);
+}
+
+.nova-soft-shadow {
+  box-shadow:
+    0 2px 6px rgba(36, 42, 38, 0.05),
+    0 14px 32px -16px rgba(33, 69, 54, 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
