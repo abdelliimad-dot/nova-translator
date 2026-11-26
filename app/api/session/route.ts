@@ -1,60 +1,157 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { NextResponse } from "next/server";
-import { buildInterpreterSystemPrompt } from "@/lib/languages";
+import {
+  SUPPORTED_LANGUAGES,
+  buildInterpreterSystemPrompt,
+} from "@/lib/languages";
+import {
+  AuthConfigurationError,
+  createRateLimiter,
+  getClientIp,
+  getClientSidFromRequest,
+  getRoomAuthFromRequest,
+  hashRateLimitKey,
+  readBoundedJsonBody,
+} from "@/lib/security/authCrypto";
 
 const DEFAULT_LIVE_MODEL =
-  process.env.GEMINI_LIVE_MODEL || "models/gemini-2.5-flash-native-audio-latest";
+  process.env.GEMINI_LIVE_MODEL ||
+  "models/gemini-2.5-flash-native-audio-latest";
 
 const ALLOWED_VOICES = new Set(["Aoede", "Kore", "Puck", "Charon", "Fenrir"]);
+const MAX_SESSION_BODY_BYTES = 2048;
 
-function sanitizeVoiceName(value: unknown): string {
-  if (typeof value === "string" && ALLOWED_VOICES.has(value)) {
-    return value;
-  }
-  return "Aoede";
-}
+// Single-process sliding-window rate limiters (non-durable across replicas).
+const sessionLimiterBySubject = createRateLimiter({
+  maxRequests: 15,
+  windowMs: 60 * 1000,
+});
+const sessionLimiterByIp = createRateLimiter({
+  maxRequests: 35,
+  windowMs: 60 * 1000,
+});
 
-function sanitizeLanguageName(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  const cleaned = value.replace(/[^\p{L}\p{N}\s\-()]/gu, "").trim();
-  if (!cleaned || cleaned.length > 48) return fallback;
-  return cleaned;
+function noStoreJson(body: unknown, status = 200, extraHeaders?: HeadersInit) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      ...extraHeaders,
+    },
+  });
 }
 
 /**
  * BFF Session Endpoint:
  * Mints a short-lived constrained Ephemeral Token using GEMINI_API_KEY on the server.
- * The raw GEMINI_API_KEY is never sent to the browser.
+ * Requires a verified signed anonymous client session (`nova_client_sid`) or
+ * verified Mode B room participant credential (`nova_room_auth`).
  */
 export async function POST(request: Request) {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "GEMINI_API_KEY is missing on the server." },
-      { status: 500 }
+  let clientSid: ReturnType<typeof getClientSidFromRequest> = null;
+  let roomAuth: ReturnType<typeof getRoomAuthFromRequest> = null;
+  let ipBucketKey: string;
+  try {
+    clientSid = getClientSidFromRequest(request);
+    roomAuth = clientSid ? null : getRoomAuthFromRequest(request);
+    ipBucketKey = hashRateLimitKey("session-ip", getClientIp(request));
+  } catch (err) {
+    if (err instanceof AuthConfigurationError) {
+      console.error(err.message);
+      return noStoreJson(
+        { error: "Server security configuration error." },
+        503
+      );
+    }
+    throw err;
+  }
+
+  if (!clientSid && !roomAuth) {
+    return noStoreJson(
+      { error: "Authentication required to start a translation session." },
+      401
     );
   }
 
-  let body: { langA?: unknown; langB?: unknown; voiceName?: unknown } = {};
-  try {
-    body = (await request.json()) as {
-      langA?: unknown;
-      langB?: unknown;
-      voiceName?: unknown;
-    };
-  } catch {
-    // Allow empty body -> defaults
+  const subjectKey = clientSid
+    ? `sid:${clientSid.sid}`
+    : `room:${roomAuth!.roomId}:${roomAuth!.credId}`;
+
+  const subjectLimit = sessionLimiterBySubject.check(subjectKey);
+  if (!subjectLimit.allowed) {
+    return noStoreJson(
+      { error: "Too many session requests. Please wait a moment and retry." },
+      429,
+      { "Retry-After": String(subjectLimit.retryAfterSeconds) }
+    );
   }
 
-  const langA = sanitizeLanguageName(body.langA, "Arabic");
-  const langB = sanitizeLanguageName(body.langB, "English");
-  const voiceName = sanitizeVoiceName(body.voiceName);
-  const systemInstruction = buildInterpreterSystemPrompt(langA, langB);
-  const model = DEFAULT_LIVE_MODEL;
+  const ipLimit = sessionLimiterByIp.check(ipBucketKey);
+  if (!ipLimit.allowed) {
+    return noStoreJson(
+      { error: "Too many requests from this network. Please retry shortly." },
+      429,
+      { "Retry-After": String(ipLimit.retryAfterSeconds) }
+    );
+  }
+
+  const parsed = await readBoundedJsonBody<{
+    langA?: unknown;
+    langB?: unknown;
+    voiceName?: unknown;
+  }>(request, MAX_SESSION_BODY_BYTES);
+
+  if (!parsed.ok) {
+    return noStoreJson({ error: parsed.error }, parsed.status);
+  }
+
+  const { langA: rawLangA, langB: rawLangB, voiceName: rawVoice } = parsed.data;
+
+  if (typeof rawLangA !== "string" || typeof rawLangB !== "string") {
+    return noStoreJson(
+      { error: "Both langA and langB language codes are required." },
+      400
+    );
+  }
+
+  const codeA = rawLangA.trim().toLowerCase();
+  const codeB = rawLangB.trim().toLowerCase();
+
+  const langEntryA = SUPPORTED_LANGUAGES.find((lang) => lang.code === codeA);
+  const langEntryB = SUPPORTED_LANGUAGES.find((lang) => lang.code === codeB);
+
+  if (!langEntryA || !langEntryB) {
+    return noStoreJson(
+      { error: "Unsupported language code specified." },
+      400
+    );
+  }
+
+  let voiceName = "Aoede";
+  if (rawVoice !== undefined) {
+    if (typeof rawVoice !== "string" || !ALLOWED_VOICES.has(rawVoice)) {
+      return noStoreJson({ error: "Unsupported voice selection." }, 400);
+    }
+    voiceName = rawVoice;
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    return noStoreJson(
+      { error: "Translation service is temporarily unavailable." },
+      503
+    );
+  }
+
+  const systemInstruction = buildInterpreterSystemPrompt(
+    langEntryA.label,
+    langEntryB.label
+  );
 
   const now = Date.now();
-  const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
-  const newSessionExpireTime = new Date(now + 90 * 1000).toISOString();
+  const expireTime = new Date(now + 10 * 60 * 1000).toISOString(); // 10 minutes
+  const newSessionExpireTime = new Date(now + 60 * 1000).toISOString(); // 60 seconds
+  const model = DEFAULT_LIVE_MODEL;
 
   try {
     const ai = new GoogleGenAI({
@@ -67,6 +164,13 @@ export async function POST(request: Request) {
         uses: 1,
         expireTime,
         newSessionExpireTime,
+        lockAdditionalFields: [
+          "tools",
+          "safetySettings",
+          "realtimeInputConfig",
+          "generationConfig",
+          "proactivity",
+        ],
         liveConnectConstraints: {
           model,
           config: {
@@ -97,31 +201,29 @@ export async function POST(request: Request) {
     });
 
     if (!token.name) {
-      return NextResponse.json(
-        { error: "Failed to mint ephemeral session token." },
-        { status: 502 }
+      return noStoreJson(
+        { error: "Failed to initialize translation session." },
+        502
       );
     }
 
-    return NextResponse.json(
-      {
-        token: token.name,
-        model,
-        expiresAt: expireTime,
-        langA,
-        langB,
-        voiceName,
-        systemInstruction,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store",
-        },
-      }
-    );
+    return noStoreJson({
+      token: token.name,
+      model,
+      expiresAt: expireTime,
+      langA: langEntryA.code,
+      langB: langEntryB.code,
+      voiceName,
+      systemInstruction,
+    });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to initialize Gemini session.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    console.error(
+      "[Session] Ephemeral token creation failed:",
+      err instanceof Error ? err.name : "UnknownError"
+    );
+    return noStoreJson(
+      { error: "Failed to initialize translation session." },
+      502
+    );
   }
 }

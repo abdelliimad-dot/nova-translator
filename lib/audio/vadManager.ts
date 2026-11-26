@@ -6,8 +6,12 @@ export interface VadCallbacks {
   onSpeechEnd?: () => void;
   onVADMisfire?: () => void;
   onAudioFrame?: (pcm16: Int16Array) => void;
+  /** Invoked unconditionally for every 16kHz frame (used by Push-to-Talk to bypass Silero speech gate). */
+  onRawFrame?: (pcm16: Int16Array) => void;
   onInputLevel?: (level: number, speechProb: number) => void;
   onMicAcquired?: (info: ActiveMicInfo) => void;
+  /** Fired if the underlying microphone MediaStreamTrack ends unexpectedly mid-session. */
+  onTrackEnded?: () => void;
   onError?: (message: string) => void;
 }
 
@@ -16,6 +20,7 @@ export interface VadStartOptions {
   preferredDeviceId?: string;
   audioContext?: AudioContext | null;
   sensitivity?: "low" | "balanced" | "high";
+  voiceCallAec?: boolean;
 }
 
 function float32ToInt16(frame: Float32Array): Int16Array {
@@ -50,10 +55,12 @@ export class VadManager {
   private vad: MicVAD | null = null;
   private callbacks: VadCallbacks;
   private preferredDeviceId?: string;
+  private voiceCallAec = false;
   private preAcquiredStream: MediaStream | null = null;
   private isSpeaking = false;
   private preSpeechRing: Int16Array[] = [];
   private active = false;
+  private startEpoch = 0;
 
   constructor(callbacks: VadCallbacks = {}) {
     this.callbacks = callbacks;
@@ -68,8 +75,12 @@ export class VadManager {
   }
 
   public async start(opts: VadStartOptions = {}): Promise<void> {
+    const epoch = ++this.startEpoch;
     if (opts.preferredDeviceId !== undefined) {
       this.preferredDeviceId = opts.preferredDeviceId;
+    }
+    if (opts.voiceCallAec !== undefined) {
+      this.voiceCallAec = opts.voiceCallAec;
     }
     if (opts.stream) {
       this.preAcquiredStream = opts.stream;
@@ -77,16 +88,27 @@ export class VadManager {
 
     if (this.vad) {
       await this.vad.start();
-      this.active = true;
+      if (epoch === this.startEpoch) {
+        this.active = true;
+      }
       return;
     }
 
     const { MicVAD: MicVADCtor } = await import("@ricky0123/vad-web");
+    if (epoch !== this.startEpoch) return;
+
     const micManager = getMicManager();
 
     // Pre-acquire non-BT built-in mic via MicManager if caller did not pass a stream
     if (!this.preAcquiredStream) {
-      const info = await micManager.acquireMic(this.preferredDeviceId);
+      const info = await micManager.acquireMic(this.preferredDeviceId, {
+        voiceCallAec: this.voiceCallAec,
+        onTrackEnded: () => this.callbacks.onTrackEnded?.(),
+      });
+      if (epoch !== this.startEpoch) {
+        micManager.releaseMic();
+        return;
+      }
       this.preAcquiredStream = info.stream;
       this.callbacks.onMicAcquired?.(info);
     }
@@ -100,7 +122,10 @@ export class VadManager {
       ) {
         return this.preAcquiredStream;
       }
-      const info = await micManager.acquireMic(this.preferredDeviceId);
+      const info = await micManager.acquireMic(this.preferredDeviceId, {
+        voiceCallAec: this.voiceCallAec,
+        onTrackEnded: () => this.callbacks.onTrackEnded?.(),
+      });
       this.preAcquiredStream = info.stream;
       this.callbacks.onMicAcquired?.(info);
       return info.stream;
@@ -108,20 +133,20 @@ export class VadManager {
 
     const thresholdPreset =
       opts.sensitivity === "low"
-        ? { positive: 0.86, negative: 0.65, minSpeechMs: 420 }
+        ? { positive: 0.86, negative: 0.65, minSpeechMs: 420, redemptionMs: 720 }
         : opts.sensitivity === "high"
-          ? { positive: 0.65, negative: 0.45, minSpeechMs: 220 }
-          : { positive: 0.78, negative: 0.55, minSpeechMs: 320 };
+          ? { positive: 0.65, negative: 0.45, minSpeechMs: 220, redemptionMs: 420 }
+          : { positive: 0.78, negative: 0.55, minSpeechMs: 320, redemptionMs: 520 };
 
     try {
-      this.vad = await MicVADCtor.new({
+      const instance = await MicVADCtor.new({
         model: "v5",
         baseAssetPath: "/vad/",
         onnxWASMBasePath: "/vad/",
         audioContext: opts.audioContext ?? undefined,
         positiveSpeechThreshold: thresholdPreset.positive,
         negativeSpeechThreshold: thresholdPreset.negative,
-        redemptionMs: 650,
+        redemptionMs: thresholdPreset.redemptionMs,
         minSpeechMs: thresholdPreset.minSpeechMs,
         preSpeechPadMs: 224,
         submitUserSpeechOnPause: false,
@@ -141,6 +166,8 @@ export class VadManager {
           this.callbacks.onInputLevel?.(level, probs.isSpeech);
 
           const pcm16 = float32ToInt16(frame);
+          this.callbacks.onRawFrame?.(pcm16);
+
           if (this.isSpeaking) {
             this.callbacks.onAudioFrame?.(pcm16);
           } else {
@@ -177,10 +204,26 @@ export class VadManager {
         },
       });
 
+      // Prevent orphaned running AudioWorklet if pause()/destroy() raced during async WASM init
+      if (epoch !== this.startEpoch) {
+        await instance.destroy().catch(() => {});
+        micManager.releaseMic();
+        return;
+      }
+
+      this.vad = instance;
       await this.vad.start();
+      if (epoch !== this.startEpoch) {
+        await this.vad.destroy().catch(() => {});
+        this.vad = null;
+        micManager.releaseMic();
+        return;
+      }
       this.active = true;
     } catch (err) {
       this.active = false;
+      this.preAcquiredStream = null;
+      getMicManager().releaseMic();
       const msg =
         err instanceof Error
           ? err.message
@@ -191,6 +234,7 @@ export class VadManager {
   }
 
   public async pause(): Promise<void> {
+    this.startEpoch += 1;
     this.isSpeaking = false;
     this.preSpeechRing = [];
     this.active = false;
@@ -201,6 +245,7 @@ export class VadManager {
   }
 
   public async destroy(): Promise<void> {
+    this.startEpoch += 1;
     this.isSpeaking = false;
     this.preSpeechRing = [];
     this.active = false;

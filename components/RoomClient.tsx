@@ -52,6 +52,11 @@ import {
   formatTranscriptForExport,
   SUPPORTED_LANGUAGES,
 } from "@/lib/languages";
+import {
+  resolveAuthoritativeRoomLanguages,
+  RoomLanguageSyncController,
+  type SynchronizedTranslatorHandle,
+} from "@/lib/rooms/roomSessionSync";
 import type {
   ParticipantRole,
   PublicRoomSnapshot,
@@ -117,10 +122,28 @@ export default function RoomClient() {
   const params = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
   const roomId = (params?.roomId ?? "").toUpperCase();
-  const role: ParticipantRole =
-    searchParams.get("role") === "host" ? "host" : "guest";
-  const initiallyConfirmed =
-    role === "host" || searchParams.get("confirmed") === "1";
+
+  const [verifiedRole, setVerifiedRole] = useState<ParticipantRole | null>(
+    null
+  );
+  const role: ParticipantRole = verifiedRole ?? "guest";
+  const roleRef = useRef<ParticipantRole>(role);
+
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+
+  const [hostInviteToken, setHostInviteToken] = useState<string | null>(null);
+  const [hostPasscode, setHostPasscode] = useState<string | null>(null);
+  const scrubbedInviteRef = useRef<string | null>(null);
+  const [scrubbedInviteToken, setScrubbedInviteToken] = useState<string | null>(
+    null
+  );
+  const [needsJoinAuth, setNeedsJoinAuth] = useState(false);
+  const [joinPasscodeInput, setJoinPasscodeInput] = useState("");
+  const [joinLangChoice, setJoinLangChoice] = useState("en");
+  const [joiningRoom, setJoiningRoom] = useState(false);
+  const [joinAuthError, setJoinAuthError] = useState<string | null>(null);
 
   const settings = useNovaSettings();
   const isOnline = useIsOnline();
@@ -138,14 +161,18 @@ export default function RoomClient() {
   const [ephemeralMessages, setEphemeralMessages] = useState<
     RoomTranscriptItem[]
   >([]);
-  const [joinConfirmed, setJoinConfirmed] = useState(initiallyConfirmed);
-  const [showQR, setShowQR] = useState(role === "host");
+  const [joinConfirmed, setJoinConfirmed] = useState(
+    searchParams.get("confirmed") === "1"
+  );
+  const [showQR, setShowQR] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [earbudTestOpen, setEarbudTestOpen] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
   const [replayingMessageId, setReplayingMessageId] = useState<string | null>(
     null
   );
+  const [visibleMessageLimit, setVisibleMessageLimit] = useState(60);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   // Audio & Gemini Live state
   const [liveStatus, setLiveStatus] = useState<LiveConnectionStatus>("idle");
@@ -185,12 +212,15 @@ export default function RoomClient() {
   const originalVoiceEnabledRef = useRef(true);
   const voiceCallDesiredRef = useRef(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
   const rafRef = useRef<number | null>(null);
   const replayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Audio relay batching refs
   const audioBatchRef = useRef<Int16Array[]>([]);
   const audioBatchSamplesRef = useRef(0);
+  const audioBatchTurnIdRef = useRef<string | undefined>(undefined);
   const audioSampleRateRef = useRef(24000);
   const audioSeqRef = useRef(0);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,12 +231,56 @@ export default function RoomClient() {
   const latestPartnerMessageIdRef = useRef<string | null>(null);
   const sseActiveRef = useRef(false);
   const pttActiveRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const isRunningRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const voiceNameRef = useRef(settings.voiceName);
   const captureModeRef = useRef<CaptureMode>(captureMode);
   const saveTranscriptsRef = useRef(settings.saveTranscripts);
+  const sessionSyncRef = useRef<RoomLanguageSyncController | null>(null);
 
   useEffect(() => {
     captureModeRef.current = captureMode;
   }, [captureMode]);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    voiceNameRef.current = settings.voiceName;
+  }, [settings.voiceName]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.addEventListener) {
+      return;
+    }
+    const handleDeviceChange = () => {
+      void listMicDevices()
+        .then((res) => setMicDevices(res.devices))
+        .catch(() => {});
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    return getStereoEngine().attachLifecycleRecovery((state) => {
+      setAudioCtxState(state);
+      if (state === "suspended") {
+        setStatusError("Audio suspended by OS; tap screen or restart live audio to resume.");
+      } else if (state === "running") {
+        setStatusError(null);
+      }
+    });
+  }, [isRunning]);
 
   useEffect(() => {
     saveTranscriptsRef.current = settings.saveTranscripts;
@@ -273,7 +347,8 @@ export default function RoomClient() {
           await fetch(`/api/rooms/${roomId}/relay`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ role, kind, payload }),
+            credentials: "same-origin",
+            body: JSON.stringify({ role: roleRef.current, kind, payload }),
           });
         } catch {
           // Non-fatal network blip; ICE/fallback poll retries
@@ -286,8 +361,9 @@ export default function RoomClient() {
   }, [role, roomId]);
 
   useEffect(() => {
+    if (messages.length === 0) return;
     const el = scrollRef.current;
-    if (el) {
+    if (el && isNearBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
@@ -336,6 +412,7 @@ export default function RoomClient() {
 
     const merged = mergeInt16Chunks(audioBatchRef.current);
     const sampleRate = audioSampleRateRef.current;
+    const turnId = audioBatchTurnIdRef.current;
     const seq = ++audioSeqRef.current;
     audioBatchRef.current = [];
     audioBatchSamplesRef.current = 0;
@@ -344,21 +421,27 @@ export default function RoomClient() {
       await fetch(`/api/rooms/${roomId}/relay`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({
-          role,
+          role: roleRef.current,
           kind: "audio",
           data: int16ToBase64(merged),
           sampleRate,
+          ...(turnId ? { turnId } : {}),
           seq,
         }),
       });
     } catch {
       // Non-fatal network blip
     }
-  }, [role, roomId]);
+  }, [roomId]);
 
   const queueAudioForPartner = useCallback(
-    (pcm16: Int16Array, sampleRate: number) => {
+    (pcm16: Int16Array, sampleRate: number, turnId?: string) => {
+      if (turnId && audioBatchTurnIdRef.current && audioBatchTurnIdRef.current !== turnId && audioBatchRef.current.length > 0) {
+        void flushAudioRelay();
+      }
+      audioBatchTurnIdRef.current = turnId;
       audioSampleRateRef.current = sampleRate;
       audioBatchRef.current.push(pcm16);
       audioBatchSamplesRef.current += pcm16.length;
@@ -374,54 +457,85 @@ export default function RoomClient() {
     [flushAudioRelay]
   );
 
-  const stopAudioSession = useCallback(async () => {
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = null;
-    }
-    audioBatchRef.current = [];
-    audioBatchSamplesRef.current = 0;
+  const stopAudioSession = useCallback(
+    async (preserveErrorStatus = false) => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      audioBatchRef.current = [];
+      audioBatchSamplesRef.current = 0;
 
-    callManagerRef.current?.hangup(true);
-    getStereoEngine().detachRemoteVoiceStream();
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
+      callManagerRef.current?.hangup(true);
+      getStereoEngine().detachRemoteVoiceStream();
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = null;
+      }
 
-    if (vadRef.current) {
-      await vadRef.current.destroy();
-      vadRef.current = null;
-    }
-    if (clientRef.current) {
-      clientRef.current.disconnect();
-      clientRef.current = null;
-    }
-    getStereoEngine().stopAll();
-    setIsRunning(false);
-    setIsMuted(false);
-    setIsSpeaking(false);
-    setPttActive(false);
-    pttActiveRef.current = false;
-    setInputLevel(0);
-    setRemoteVoiceLevel(0);
-    setIsVoiceDucked(false);
-    setCallState("idle");
-    setCallElapsedSec(0);
-    setLiveStatus("disconnected");
-    syncAudioDiagnostics();
-  }, [syncAudioDiagnostics]);
+      if (vadRef.current) {
+        await vadRef.current.destroy();
+        vadRef.current = null;
+      }
+      isStartingRef.current = false;
+      isRunningRef.current = false;
+      sessionSyncRef.current?.teardownCurrentClient();
+      if (clientRef.current) {
+        clientRef.current.disconnect();
+        clientRef.current = null;
+      }
+      getStereoEngine().stopAll();
+      setIsRunning(false);
+      setIsMuted(false);
+      setIsSpeaking(false);
+      isSpeakingRef.current = false;
+      setPttActive(false);
+      pttActiveRef.current = false;
+      setInputLevel(0);
+      setRemoteVoiceLevel(0);
+      setIsVoiceDucked(false);
+      setCallState("idle");
+      setCallElapsedSec(0);
+      if (!preserveErrorStatus) {
+        setLiveStatus("disconnected");
+      }
+      syncAudioDiagnostics();
+    },
+    [syncAudioDiagnostics]
+  );
 
   // SSE + 1000ms fallback polling (preserved intact from Phase 3)
   useEffect(() => {
     if (!roomId) return;
 
+    // Scrub URL fragment invite token immediately before any room HTTP request
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash;
+      if (hash && hash.includes("invite=")) {
+        const hashParams = new URLSearchParams(hash.slice(1));
+        const extracted = hashParams.get("invite")?.trim();
+        if (extracted && extracted.length >= 8 && extracted.length <= 128) {
+          scrubbedInviteRef.current = extracted;
+        }
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search
+        );
+      }
+    }
+
     let cancelled = false;
+    let es: EventSource | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
     sseActiveRef.current = false;
 
-    const syncMessagesFromServer = (serverMsgs: RoomTranscriptItem[]) => {
+    const syncMessagesFromServer = (
+      serverMsgs: RoomTranscriptItem[],
+      activeRole: ParticipantRole
+    ) => {
       const latestPartner = [...serverMsgs]
         .reverse()
-        .find((m) => m.sender !== role);
+        .find((m) => m.sender !== activeRole);
       if (latestPartner) {
         latestPartnerMessageIdRef.current = latestPartner.id;
       }
@@ -432,8 +546,11 @@ export default function RoomClient() {
       }
     };
 
-    const upsertSingleMessage = (item: RoomTranscriptItem) => {
-      if (item.sender !== role) {
+    const upsertSingleMessage = (
+      item: RoomTranscriptItem,
+      activeRole: ParticipantRole
+    ) => {
+      if (item.sender !== activeRole) {
         latestPartnerMessageIdRef.current = item.id;
       }
       if (saveTranscriptsRef.current) {
@@ -441,26 +558,30 @@ export default function RoomClient() {
       } else {
         setEphemeralMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === item.id);
-          if (idx >= 0) {
-            const copy = [...prev];
-            copy[idx] = item;
-            return copy;
-          }
-          return [...prev.slice(-49), item];
+          const next =
+            idx >= 0
+              ? prev.map((existing, i) => (i === idx ? item : existing))
+              : [...prev, item];
+          return next.sort((a, b) => a.timestamp - b.timestamp);
         });
       }
     };
 
-    const applyRoomSnapshot = (snap: PublicRoomSnapshot) => {
+    const applyRoomSnapshot = (
+      snap: PublicRoomSnapshot,
+      activeRole: ParticipantRole
+    ) => {
       setRoom(snap);
-      syncMessagesFromServer(snap.messages);
+      syncMessagesFromServer(snap.messages, activeRole);
       setRoomError(null);
+      setNeedsJoinAuth(false);
       setRoomSyncStatus("connected");
       if (snap.ended) {
         setRoomEnded(true);
         void stopAudioSession();
         return;
       }
+      void sessionSyncRef.current?.syncWithRoomSnapshot(snap);
       if (snap.latestAudioSeq > lastReceivedAudioSeqRef.current) {
         lastReceivedAudioSeqRef.current = snap.latestAudioSeq;
       }
@@ -470,9 +591,164 @@ export default function RoomClient() {
           lastReceivedSignalSeqRef.current = snap.latestSignalSeq;
         }
       }
-      if (role === "host" && snap.guestConnected) {
+      if (activeRole === "host" && snap.guestConnected) {
         setShowQR(false);
       }
+    };
+
+    const startRealtimeStreams = (activeRole: ParticipantRole) => {
+      if (cancelled) return;
+
+      es = new EventSource(`/api/rooms/${roomId}/events`);
+      es.onmessage = (ev) => {
+        sseActiveRef.current = true;
+        setRoomSyncStatus("connected");
+        const currentRole = roleRef.current || activeRole;
+        try {
+          const parsed = JSON.parse(ev.data) as RoomServerEvent & {
+            error?: string;
+          };
+          if (parsed.type === "init") {
+            applyRoomSnapshot(parsed.room, currentRole);
+          } else if (parsed.type === "presence") {
+            setRoom(parsed.room);
+            if (currentRole === "host" && parsed.room.guestConnected) {
+              setShowQR(false);
+            }
+          } else if (parsed.type === "lang_update") {
+            setRoom(parsed.room);
+            void sessionSyncRef.current?.syncWithRoomSnapshot(parsed.room);
+          } else if (parsed.type === "transcript") {
+            upsertSingleMessage(parsed.item, currentRole);
+          } else if (parsed.type === "audio") {
+            if (
+              parsed.sender !== currentRole &&
+              parsed.seq > lastReceivedAudioSeqRef.current
+            ) {
+              lastReceivedAudioSeqRef.current = parsed.seq;
+              const pcm16 = base64ToInt16(parsed.data);
+              if (pcm16.length > 0) {
+                const targetTurnId = parsed.turnId || latestPartnerMessageIdRef.current;
+                if (targetTurnId) {
+                  appendTurnAudioChunk(
+                    `room:${targetTurnId}`,
+                    pcm16,
+                    parsed.sampleRate
+                  );
+                }
+                getStereoEngine().enqueuePcm16(pcm16, 0.0, parsed.sampleRate);
+              }
+            }
+          } else if (parsed.type === "interrupted") {
+            if (parsed.sender !== currentRole) {
+              getStereoEngine().stopAll();
+            }
+          } else if (parsed.type === "webrtc_signal") {
+            if (
+              parsed.sender !== currentRole &&
+              parsed.seq > lastReceivedSignalSeqRef.current
+            ) {
+              lastReceivedSignalSeqRef.current = parsed.seq;
+              void getOrCreateCallManager().handleIncomingSignal(
+                parsed.kind,
+                parsed.payload
+              );
+            }
+          } else if (parsed.type === "room_ended") {
+            setRoomEnded(true);
+            setRoom((prev) => (prev ? { ...prev, ended: true } : prev));
+            void stopAudioSession();
+          } else if (
+            typeof (parsed as { error?: unknown }).error === "string" &&
+            (parsed as { error: string }).error
+          ) {
+            setRoomSyncStatus("error");
+            setRoomError((parsed as { error: string }).error);
+          }
+        } catch {
+          // Ignore malformed SSE payload
+        }
+      };
+
+      es.onerror = () => {
+        sseActiveRef.current = false;
+        if (!cancelled) {
+          setRoomSyncStatus((prev) =>
+            prev === "error" ? prev : "reconnecting"
+          );
+        }
+      };
+
+      pollTimer = setInterval(() => {
+        if (cancelled || sseActiveRef.current) return;
+        const currentRole = roleRef.current || activeRole;
+        void fetch(
+          `/api/rooms/${roomId}?afterAudioSeq=${lastReceivedAudioSeqRef.current}&afterSignalSeq=${lastReceivedSignalSeqRef.current}`,
+          { cache: "no-store", credentials: "same-origin" }
+        )
+          .then(async (res) => {
+            if (cancelled) return;
+            if (res.status === 410) {
+              setRoomEnded(true);
+              void stopAudioSession();
+              return;
+            }
+            if (res.status === 401 || res.status === 403) {
+              setScrubbedInviteToken(scrubbedInviteRef.current);
+              setNeedsJoinAuth(true);
+              return;
+            }
+            if (!res.ok) return;
+            setRoomSyncStatus("connected");
+            const data = (await res.json()) as {
+              room?: PublicRoomSnapshot;
+              audio?: RelayedAudioPacket[];
+              signals?: RelayedSignalPacket[];
+            };
+            if (data.room) {
+              setRoom(data.room);
+              syncMessagesFromServer(data.room.messages, currentRole);
+              if (data.room.ended) {
+                setRoomEnded(true);
+                void stopAudioSession();
+                return;
+              }
+              void sessionSyncRef.current?.syncWithRoomSnapshot(data.room);
+              if (currentRole === "host" && data.room.guestConnected) {
+                setShowQR(false);
+              }
+            }
+            if (data.signals && data.signals.length > 0) {
+              const callMgr = getOrCreateCallManager();
+              for (const sig of data.signals) {
+                if (sig.seq > lastReceivedSignalSeqRef.current) {
+                  lastReceivedSignalSeqRef.current = sig.seq;
+                  void callMgr.handleIncomingSignal(sig.kind, sig.payload);
+                }
+              }
+            }
+            if (data.audio && data.audio.length > 0) {
+              for (const pkt of data.audio) {
+                if (pkt.seq > lastReceivedAudioSeqRef.current) {
+                  lastReceivedAudioSeqRef.current = pkt.seq;
+                  const pcm16 = base64ToInt16(pkt.data);
+                  if (pcm16.length > 0) {
+                    const targetTurnId = pkt.turnId || latestPartnerMessageIdRef.current;
+                    if (targetTurnId) {
+                      appendTurnAudioChunk(
+                        `room:${targetTurnId}`,
+                        pcm16,
+                        pkt.sampleRate
+                      );
+                    }
+                    getStereoEngine().enqueuePcm16(pcm16, 0.0, pkt.sampleRate);
+                  }
+                }
+              }
+            }
+          })
+          .catch(() => {});
+      }, 1000);
     };
 
     const controller = new AbortController();
@@ -486,23 +762,51 @@ export default function RoomClient() {
       }
     }, 5000);
 
-    void fetch(`/api/rooms/${roomId}?role=${role}`, {
+    void fetch(`/api/rooms/${roomId}`, {
       cache: "no-store",
+      credentials: "same-origin",
       signal: controller.signal,
     })
       .then(async (res) => {
         clearTimeout(timeoutId);
+        if (cancelled) return;
         const data = (await res.json()) as {
           room?: PublicRoomSnapshot;
+          role?: ParticipantRole;
+          inviteToken?: string;
+          passcode?: string;
           error?: string;
         };
-        if (cancelled) return;
+        if (res.status === 410) {
+          setRoomEnded(true);
+          return;
+        }
+        if (res.status === 401 || res.status === 403) {
+          setScrubbedInviteToken(scrubbedInviteRef.current);
+          setNeedsJoinAuth(true);
+          setJoinConfirmed(false);
+          setRoomSyncStatus("connecting");
+          return;
+        }
         if (!res.ok || !data.room) {
           setRoomSyncStatus("error");
           setRoomError(data.error || "Room not found.");
           return;
         }
-        applyRoomSnapshot(data.room);
+
+        const serverRole = data.role ?? "guest";
+        setVerifiedRole(serverRole);
+        roleRef.current = serverRole;
+        if (serverRole === "host") {
+          setHostInviteToken(data.inviteToken ?? null);
+          setHostPasscode(data.passcode ?? null);
+          setJoinConfirmed(true);
+          if (!data.room.guestConnected) {
+            setShowQR(true);
+          }
+        }
+        applyRoomSnapshot(data.room, serverRole);
+        startRealtimeStreams(serverRole);
       })
       .catch((err) => {
         clearTimeout(timeoutId);
@@ -512,176 +816,59 @@ export default function RoomClient() {
         setRoomError("Unable to reach room server.");
       });
 
-    const es = new EventSource(`/api/rooms/${roomId}/events?role=${role}`);
-    es.onmessage = (ev) => {
-      sseActiveRef.current = true;
-      setRoomSyncStatus("connected");
-      try {
-        const parsed = JSON.parse(ev.data) as RoomServerEvent;
-        if (parsed.type === "init") {
-          applyRoomSnapshot(parsed.room);
-        } else if (parsed.type === "presence") {
-          setRoom(parsed.room);
-          if (role === "host" && parsed.room.guestConnected) {
-            setShowQR(false);
-          }
-        } else if (parsed.type === "lang_update") {
-          setRoom(parsed.room);
-        } else if (parsed.type === "transcript") {
-          upsertSingleMessage(parsed.item);
-        } else if (parsed.type === "audio") {
-          if (
-            parsed.sender !== role &&
-            parsed.seq > lastReceivedAudioSeqRef.current
-          ) {
-            lastReceivedAudioSeqRef.current = parsed.seq;
-            const pcm16 = base64ToInt16(parsed.data);
-            if (pcm16.length > 0) {
-              if (latestPartnerMessageIdRef.current) {
-                appendTurnAudioChunk(
-                  `room:${latestPartnerMessageIdRef.current}`,
-                  pcm16,
-                  parsed.sampleRate
-                );
-              }
-              getStereoEngine().enqueuePcm16(pcm16, 0.0, parsed.sampleRate);
-            }
-          }
-        } else if (parsed.type === "interrupted") {
-          if (parsed.sender !== role) {
-            getStereoEngine().stopAll();
-          }
-        } else if (parsed.type === "webrtc_signal") {
-          if (
-            parsed.sender !== role &&
-            parsed.seq > lastReceivedSignalSeqRef.current
-          ) {
-            lastReceivedSignalSeqRef.current = parsed.seq;
-            void getOrCreateCallManager().handleIncomingSignal(
-              parsed.kind,
-              parsed.payload
-            );
-          }
-        } else if (parsed.type === "room_ended") {
-          setRoomEnded(true);
-          setRoom((prev) => (prev ? { ...prev, ended: true } : prev));
-          void stopAudioSession();
-        } else if (parsed.type === "error") {
-          setRoomSyncStatus("error");
-          setRoomError(parsed.error);
-        }
-      } catch {
-        // Ignore malformed SSE payload
-      }
-    };
-
-    es.onerror = () => {
-      sseActiveRef.current = false;
-      if (!cancelled) {
-        setRoomSyncStatus((prev) => (prev === "error" ? prev : "reconnecting"));
-      }
-    };
-
-    const pollTimer = setInterval(() => {
-      if (cancelled || sseActiveRef.current) return;
-      void fetch(
-        `/api/rooms/${roomId}?role=${role}&afterAudioSeq=${lastReceivedAudioSeqRef.current}&afterSignalSeq=${lastReceivedSignalSeqRef.current}`,
-        { cache: "no-store" }
-      )
-        .then(async (res) => {
-          if (!res.ok || cancelled) return;
-          const data = (await res.json()) as {
-            room?: PublicRoomSnapshot;
-            audio?: RelayedAudioPacket[];
-            signals?: RelayedSignalPacket[];
-          };
-          if (data.room) {
-            setRoom(data.room);
-            syncMessagesFromServer(data.room.messages);
-            if (data.room.ended) {
-              setRoomEnded(true);
-              void stopAudioSession();
-              return;
-            }
-            if (role === "host" && data.room.guestConnected) {
-              setShowQR(false);
-            }
-          }
-          if (data.signals && data.signals.length > 0) {
-            const callMgr = getOrCreateCallManager();
-            for (const sig of data.signals) {
-              if (sig.seq > lastReceivedSignalSeqRef.current) {
-                lastReceivedSignalSeqRef.current = sig.seq;
-                void callMgr.handleIncomingSignal(sig.kind, sig.payload);
-              }
-            }
-          }
-          if (data.audio && data.audio.length > 0) {
-            for (const pkt of data.audio) {
-              if (pkt.seq > lastReceivedAudioSeqRef.current) {
-                lastReceivedAudioSeqRef.current = pkt.seq;
-                const pcm16 = base64ToInt16(pkt.data);
-                if (pcm16.length > 0) {
-                  if (latestPartnerMessageIdRef.current) {
-                    appendTurnAudioChunk(
-                      `room:${latestPartnerMessageIdRef.current}`,
-                      pcm16,
-                      pkt.sampleRate
-                    );
-                  }
-                  getStereoEngine().enqueuePcm16(pcm16, 0.0, pkt.sampleRate);
-                }
-              }
-            }
-          }
-        })
-        .catch(() => {});
-    }, 1000);
-
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
-      clearInterval(pollTimer);
+      if (pollTimer) clearInterval(pollTimer);
       controller.abort();
-      es.close();
+      es?.close();
     };
-  }, [roomId, role, retrySeed, stopAudioSession, getOrCreateCallManager]);
+  }, [roomId, retrySeed, stopAudioSession, getOrCreateCallManager]);
 
   useEffect(() => {
     return () => {
       if (replayTimerRef.current) clearTimeout(replayTimerRef.current);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
       void stopAudioSession();
     };
   }, [stopAudioSession]);
 
-  const startAudioSession = useCallback(
-    async (unlockedCtx: AudioContext, currentRoom: PublicRoomSnapshot) => {
-      setStatusError(null);
-      setLiveStatus("connecting");
+  const getOrCreateSessionSyncController = useCallback(() => {
+    if (sessionSyncRef.current) return sessionSyncRef.current;
 
-      const myLang = findLanguage(
-        role === "host" ? currentRoom.hostLangCode : currentRoom.guestLangCode
-      );
-      const partnerLang = findLanguage(
-        role === "host" ? currentRoom.guestLangCode : currentRoom.hostLangCode
-      );
+    const controller = new RoomLanguageSyncController({
+      getRole: () => roleRef.current,
+      isSessionActive: () => isRunningRef.current || isStartingRef.current,
+      isSpeaking: () => isSpeakingRef.current || pttActiveRef.current,
+      createTranslator: (langs, callbackEpoch) => {
+        const currentRole = roleRef.current;
+        const myLang = langs.myLang;
+        const partnerLang = langs.partnerLang;
+        let activeHandle: SynchronizedTranslatorHandle | null = null;
 
-      try {
-        if (unlockedCtx.state === "suspended") {
-          await unlockedCtx.resume();
-        }
-        syncAudioDiagnostics();
+        const isCurrent = () =>
+          activeHandle !== null &&
+          controller.isCurrentCallback(callbackEpoch, activeHandle);
 
-        const client = new GeminiLiveTranslatorClient({
+        const translator = new GeminiLiveTranslatorClient({
           langACode: myLang.code,
           langALabel: myLang.label,
           langBCode: partnerLang.code,
           langBLabel: partnerLang.label,
-          voiceName: settings.voiceName,
+          voiceName: voiceNameRef.current,
           speakerOverride: "A",
           callbacks: {
-            onStatusChange: (s) => setLiveStatus(s),
+            onStatusChange: (s, detail) => {
+              if (!activeHandle) return;
+              controller.handleTranslatorStatus(
+                callbackEpoch,
+                activeHandle,
+                s,
+                detail
+              );
+            },
             onTranscriptUpdate: (turn) => {
+              if (!isCurrent()) return;
               const now = Date.now();
               if (!turn.isFinal && now - lastTranscriptSentRef.current < 240) {
                 return;
@@ -689,8 +876,8 @@ export default function RoomClient() {
               lastTranscriptSentRef.current = now;
 
               const item: RoomTranscriptItem = {
-                id: `${role}-${turn.id}`,
-                sender: role,
+                id: `${currentRole}-${turn.id}`,
+                sender: currentRole,
                 sourceText: turn.sourceText,
                 translatedText: turn.translatedText,
                 sourceLang: myLang.code,
@@ -702,7 +889,12 @@ export default function RoomClient() {
               void fetch(`/api/rooms/${roomId}/relay`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ role, kind: "transcript", item }),
+                credentials: "same-origin",
+                body: JSON.stringify({
+                  role: currentRole,
+                  kind: "transcript",
+                  item,
+                }),
               });
 
               if (turn.isFinal) {
@@ -710,73 +902,205 @@ export default function RoomClient() {
               }
             },
             onAudioOutput: (pcm16, sampleRate, _channel, turnId) => {
-              if (turnId) {
-                appendTurnAudioChunk(`room:${role}-${turnId}`, pcm16, sampleRate);
+              if (!isCurrent()) return;
+              const roomTurnId = turnId ? `${currentRole}-${turnId}` : undefined;
+              if (roomTurnId) {
+                appendTurnAudioChunk(`room:${roomTurnId}`, pcm16, sampleRate);
               }
-              queueAudioForPartner(pcm16, sampleRate);
+              queueAudioForPartner(pcm16, sampleRate, roomTurnId);
             },
             onInterrupted: () => {
+              if (!isCurrent()) return;
               audioBatchRef.current = [];
               audioBatchSamplesRef.current = 0;
               void fetch(`/api/rooms/${roomId}/relay`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ role, kind: "interrupted" }),
+                credentials: "same-origin",
+                body: JSON.stringify({
+                  role: currentRole,
+                  kind: "interrupted",
+                }),
               });
             },
-            onError: (msg) => setStatusError(msg),
+            onError: (msg) => {
+              if (!isCurrent()) return;
+              setStatusError(msg);
+            },
           },
         });
 
-        clientRef.current = client;
-        await client.connect();
+        activeHandle = translator as unknown as SynchronizedTranslatorHandle;
+        return translator;
+      },
+      onBeforeReplace: ({ previousClient, hadActiveSpeech }) => {
+        if (hadActiveSpeech) {
+          previousClient?.sendAudioStreamEnd();
+          pttActiveRef.current = false;
+          setPttActive(false);
+          setIsSpeaking(false);
+          isSpeakingRef.current = false;
+        }
+        if (flushTimerRef.current) {
+          clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = null;
+        }
+        audioBatchRef.current = [];
+        audioBatchSamplesRef.current = 0;
+        getStereoEngine().stopAll();
+      },
+      onActiveClientChanged: (client) => {
+        clientRef.current = client as GeminiLiveTranslatorClient | null;
+      },
+      onStatusChange: (status, detail) => {
+        setLiveStatus(status);
+        if (status === "reconnecting" || status === "connected") {
+          setStatusError(null);
+        } else if (status === "error") {
+          if (detail) {
+            setStatusError(detail);
+          }
+          if (isRunningRef.current || isStartingRef.current) {
+            void stopAudioSession(true);
+          }
+        }
+      },
+      onFatalError: async (msg) => {
+        setLiveStatus("error");
+        setStatusError(msg);
+        await stopAudioSession(true);
+      },
+    });
 
-        const micInfo = await getMicManager().acquireMic(
-          selectedMicId || undefined
-        );
-        setSelectedMicId(micInfo.deviceId);
-        setActiveMicLabel(micInfo.label);
-        setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
-        getStereoEngine().unlockSync();
+    sessionSyncRef.current = controller;
+    return controller;
+  }, [flushAudioRelay, queueAudioForPartner, roomId, stopAudioSession]);
+
+  const startAudioSession = useCallback(
+    async (unlockedCtx: AudioContext, currentRoom: PublicRoomSnapshot) => {
+      if (isStartingRef.current || isRunningRef.current) return;
+      isStartingRef.current = true;
+      setStatusError(null);
+      setLiveStatus("connecting");
+
+      try {
+        if (unlockedCtx.state === "suspended") {
+          await unlockedCtx.resume();
+        }
         syncAudioDiagnostics();
-        void listMicDevices().then((res) => setMicDevices(res.devices));
+
+        const syncController = getOrCreateSessionSyncController();
+        const { client, epoch: initialEpoch } =
+          await syncController.beginFreshSession(currentRoom);
+
+        const handleUnexpectedMicLoss = () => {
+          setStatusError(
+            "Microphone disconnected or preempted by another app. Check audio device and tap Start to resume."
+          );
+          void stopAudioSession(true);
+        };
 
         const vad = new VadManager({
+          onTrackEnded: handleUnexpectedMicLoss,
           onInputLevel: (level) => setInputLevel(level),
           onSpeechStart: () => {
             if (captureModeRef.current === "vad") {
+              isSpeakingRef.current = true;
               setIsSpeaking(true);
             }
           },
           onSpeechEnd: () => {
             if (captureModeRef.current === "vad") {
+              isSpeakingRef.current = false;
               setIsSpeaking(false);
-              client.sendAudioStreamEnd();
+              clientRef.current?.sendAudioStreamEnd();
             }
           },
           onVADMisfire: () => {
             if (captureModeRef.current === "vad") {
+              isSpeakingRef.current = false;
               setIsSpeaking(false);
             }
           },
           onAudioFrame: (pcm16) => {
-            if (captureModeRef.current === "vad" || pttActiveRef.current) {
-              client.sendPcm16Frame(pcm16);
+            if (
+              captureModeRef.current === "vad" &&
+              syncController.isReadyForAudio()
+            ) {
+              clientRef.current?.sendPcm16Frame(pcm16);
+            }
+          },
+          onRawFrame: (pcm16) => {
+            if (
+              captureModeRef.current === "ptt" &&
+              pttActiveRef.current &&
+              syncController.isReadyForAudio()
+            ) {
+              clientRef.current?.sendPcm16Frame(pcm16);
             }
           },
           onError: (msg) => setStatusError(msg),
         });
 
         vadRef.current = vad;
-        await vad.start({
-          stream: micInfo.stream,
-          preferredDeviceId: micInfo.deviceId || undefined,
-          audioContext: unlockedCtx,
-          sensitivity: settings.vadSensitivity,
+
+        // Parallelize Gemini session handshake with mic acquisition + Silero WASM initialization
+        const initialConnectPromise = client.connect().catch((err) => {
+          // If a language update superseded this initial handshake mid-flight, ignore stale rejection
+          if (syncController.getEpoch() !== initialEpoch) {
+            return;
+          }
+          throw err;
         });
+
+        const [, micInfo] = await Promise.all([
+          initialConnectPromise,
+          (async () => {
+            const info = await getMicManager().acquireMic(
+              selectedMicId || undefined,
+              { voiceCallAec: true, onTrackEnded: handleUnexpectedMicLoss }
+            );
+            setSelectedMicId(info.deviceId);
+            setActiveMicLabel(info.label);
+            setIsBluetoothMicRisk(info.isBluetoothRisk);
+            getStereoEngine().unlockSync();
+            syncAudioDiagnostics();
+            void listMicDevices().then((res) => setMicDevices(res.devices));
+            await vad.start({
+              stream: info.stream,
+              preferredDeviceId: info.deviceId || undefined,
+              audioContext: unlockedCtx,
+              sensitivity: settings.vadSensitivity,
+              voiceCallAec: true,
+            });
+            return info;
+          })(),
+        ]);
+
+        // Abort cleanly if user stopped/errored while startup was in flight
+        if (!isStartingRef.current || !syncController.getActiveClient()) {
+          await vad.destroy();
+          if (vadRef.current === vad) {
+            vadRef.current = null;
+          }
+          return;
+        }
+
+        // Sync once more in case a room update arrived just as startup finished
+        const latestSyncedRoom = syncController.getLatestRoom();
+        if (latestSyncedRoom) {
+          const latestPair = resolveAuthoritativeRoomLanguages(
+            roleRef.current,
+            latestSyncedRoom
+          );
+          if (latestPair.pairKey !== syncController.getActivePairKey()) {
+            void syncController.syncWithRoomSnapshot(latestSyncedRoom);
+          }
+        }
 
         getStereoEngine().unlockSync();
         syncAudioDiagnostics();
+        isRunningRef.current = true;
         setIsRunning(true);
         setIsMuted(false);
 
@@ -785,21 +1109,20 @@ export default function RoomClient() {
           await callMgr.startCall(micInfo.stream, false);
         }
       } catch (err) {
+        setLiveStatus("error");
         setStatusError(
           err instanceof Error ? err.message : "Failed to start room audio."
         );
-        await stopAudioSession();
+        await stopAudioSession(true);
+      } finally {
+        isStartingRef.current = false;
       }
     },
     [
-      flushAudioRelay,
       getOrCreateCallManager,
-      queueAudioForPartner,
-      role,
-      roomId,
+      getOrCreateSessionSyncController,
       selectedMicId,
       settings.vadSensitivity,
-      settings.voiceName,
       stopAudioSession,
       syncAudioDiagnostics,
     ]
@@ -812,6 +1135,7 @@ export default function RoomClient() {
       void stopAudioSession();
       return;
     }
+    if (isStartingRef.current) return;
     voiceCallDesiredRef.current = withVoiceCall;
     const ctx = getStereoEngine().unlockSync();
     syncAudioDiagnostics();
@@ -841,7 +1165,10 @@ export default function RoomClient() {
     if (micStream) {
       await callMgr.startCall(micStream, isMuted);
     } else {
-      const micInfo = await getMicManager().acquireMic(selectedMicId || undefined);
+      const micInfo = await getMicManager().acquireMic(
+        selectedMicId || undefined,
+        { voiceCallAec: true }
+      );
       await callMgr.startCall(micInfo.stream, isMuted);
     }
   };
@@ -870,10 +1197,14 @@ export default function RoomClient() {
           preferredDeviceId: selectedMicId || undefined,
           audioContext: ctx,
           sensitivity: settings.vadSensitivity,
+          voiceCallAec: true,
         });
       }
       engine.unlockSync();
     } else {
+      if (isSpeaking) {
+        clientRef.current?.sendAudioStreamEnd();
+      }
       setIsMuted(true);
       setIsSpeaking(false);
       setInputLevel(0);
@@ -886,6 +1217,12 @@ export default function RoomClient() {
 
   const handleSetCaptureMode = (mode: CaptureMode) => {
     triggerHaptic(settings.hapticsEnabled, 8);
+    if (captureMode !== mode && isSpeaking) {
+      pttActiveRef.current = false;
+      setPttActive(false);
+      setIsSpeaking(false);
+      clientRef.current?.sendAudioStreamEnd();
+    }
     updateNovaSettings({ captureMode: mode });
   };
 
@@ -914,16 +1251,14 @@ export default function RoomClient() {
     const res = await fetch(`/api/rooms/${roomId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify(body),
     });
     if (res.ok) {
       const data = (await res.json()) as { room: PublicRoomSnapshot };
       setRoom(data.room);
-      if (isRunning) {
-        const ctx = getStereoEngine().unlockSync();
-        await stopAudioSession();
-        await startAudioSession(ctx, data.room);
-      }
+      getOrCreateSessionSyncController();
+      await sessionSyncRef.current?.syncWithRoomSnapshot(data.room);
     }
   };
 
@@ -934,7 +1269,16 @@ export default function RoomClient() {
     setSelectedMicId(deviceId);
     if (vadRef.current && isRunning && !isMuted) {
       await vadRef.current.pause();
-      const micInfo = await getMicManager().acquireMic(deviceId || undefined);
+      const micInfo = await getMicManager().acquireMic(
+        deviceId || undefined,
+        {
+          voiceCallAec: true,
+          onTrackEnded: () => {
+            setStatusError("Microphone disconnected. Tap Start to reconnect.");
+            void stopAudioSession(true);
+          },
+        }
+      );
       setActiveMicLabel(micInfo.label);
       setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
       await callManagerRef.current?.replaceLocalStream(micInfo.stream);
@@ -944,6 +1288,7 @@ export default function RoomClient() {
         preferredDeviceId: micInfo.deviceId || undefined,
         audioContext: ctx,
         sensitivity: settings.vadSensitivity,
+        voiceCallAec: true,
       });
       engine.unlockSync();
       syncAudioDiagnostics();
@@ -971,7 +1316,8 @@ export default function RoomClient() {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedToast(true);
-      setTimeout(() => setCopiedToast(false), 1800);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopiedToast(false), 1800);
     } catch {
       // Clipboard blocked
     }
@@ -995,7 +1341,10 @@ export default function RoomClient() {
     setEndingRoom(true);
     try {
       await stopAudioSession();
-      await fetch(`/api/rooms/${roomId}`, { method: "DELETE" });
+      await fetch(`/api/rooms/${roomId}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
       setRoomEnded(true);
       setRoom((prev) => (prev ? { ...prev, ended: true } : prev));
     } catch {
@@ -1042,10 +1391,217 @@ export default function RoomClient() {
     }, 1400);
   };
 
+  useEffect(() => {
+    if (!confirmEndOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !endingRoom) setConfirmEndOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmEndOpen, endingRoom]);
+
   const getLangName = (code: string, fallback: string) => {
     if (code === "ar") return "العربية";
     return isArabicUi ? (LANGUAGE_ARABIC_NAMES[code] ?? fallback) : fallback;
   };
+
+  const handleDirectGuestJoin = async () => {
+    if (joiningRoom) return;
+    if (!scrubbedInviteToken && joinPasscodeInput.trim().length < 4) {
+      setJoinAuthError(
+        isArabicUi
+          ? "أدخل رمز الدخول المكون من 6 أحرف للمتابعة."
+          : "Enter the 6-character room passcode to continue."
+      );
+      return;
+    }
+
+    triggerHaptic(settings.hapticsEnabled, 12);
+    getStereoEngine().unlockSync();
+    syncAudioDiagnostics();
+    setJoiningRoom(true);
+    setJoinAuthError(null);
+
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          ...(scrubbedInviteToken ? { inviteToken: scrubbedInviteToken } : {}),
+          ...(joinPasscodeInput.trim()
+            ? { passcode: joinPasscodeInput.trim() }
+            : {}),
+        }),
+      });
+      const data = (await res.json()) as {
+        room?: PublicRoomSnapshot;
+        role?: ParticipantRole;
+        error?: string;
+      };
+      if (!res.ok || !data.room) {
+        setJoinAuthError(
+          data.error ||
+            (isArabicUi
+              ? "تعذر التحقق من صلاحية الانضمام للغرفة."
+              : "Could not verify room invite or passcode.")
+        );
+        setJoiningRoom(false);
+        return;
+      }
+
+      if (
+        joinLangChoice &&
+        joinLangChoice !== data.room.guestLangCode &&
+        (data.role ?? "guest") === "guest"
+      ) {
+        await fetch(`/api/rooms/${roomId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ guestLang: joinLangChoice }),
+        }).catch(() => {});
+      }
+
+      setVerifiedRole(data.role ?? "guest");
+      roleRef.current = data.role ?? "guest";
+      setRoom(data.room);
+      setNeedsJoinAuth(false);
+      setJoinConfirmed(true);
+      setJoiningRoom(false);
+      setRetrySeed((s) => s + 1);
+    } catch {
+      setJoinAuthError(
+        isArabicUi
+          ? "تعذر الاتصال بالخادم للانضمام للغرفة."
+          : "Unable to reach server to join room."
+      );
+      setJoiningRoom(false);
+    }
+  };
+
+  if (needsJoinAuth && !roomEnded) {
+    return (
+      <main
+        dir={isArabicUi ? "rtl" : "ltr"}
+        className="flex min-h-dvh w-full items-end sm:items-center justify-center bg-[#F5F3ED] p-0 sm:p-4 text-[#242A26]"
+      >
+        <div
+          className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] border border-[#E6E5DE] bg-white text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.25)] p-5 space-y-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="guest-auth-join-title"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h1
+                id="guest-auth-join-title"
+                className="text-base font-bold text-[#242A26]"
+              >
+                {isArabicUi ? "الانضمام إلى غرفة الترجمة" : "Join Translation Room"}
+              </h1>
+              <p className="text-xs text-[#777F79]">
+                {scrubbedInviteToken
+                  ? isArabicUi
+                    ? "تم التحقق من رابط الدعوة الخاص — اضغط دخول الغرفة للبدء"
+                    : "Private QR invite detected — choose your language and join"
+                  : isArabicUi
+                    ? "أدخل رمز الدخول الخاص بالغرفة (PIN) للمتابعة"
+                    : "Enter the room passcode shown on your partner's screen"}
+              </p>
+            </div>
+            <span
+              dir="ltr"
+              className="shrink-0 rounded-full bg-[#DCE8DD] px-2.5 py-1 font-mono text-[11px] font-bold text-[#214536]"
+            >
+              {roomId}
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-[#E6E5DE] bg-[#F5F3ED] p-4 space-y-3">
+            {!scrubbedInviteToken && (
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="direct-join-passcode"
+                  className="block text-xs font-semibold text-[#315F4A]"
+                >
+                  {isArabicUi ? "رمز الدخول (6 أحرف)" : "Room Passcode (PIN)"}
+                </label>
+                <input
+                  id="direct-join-passcode"
+                  type="text"
+                  dir="ltr"
+                  value={joinPasscodeInput}
+                  onChange={(e) => {
+                    setJoinAuthError(null);
+                    setJoinPasscodeInput(
+                      e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+                    );
+                  }}
+                  placeholder="XXXXXX"
+                  maxLength={10}
+                  className="min-h-[44px] w-full rounded-xl border border-[#E6E5DE] bg-white px-3.5 py-2 font-mono text-sm font-bold uppercase tracking-[0.18em] text-[#242A26] outline-none focus:border-[#315F4A]"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="direct-join-lang"
+                className="text-xs font-semibold text-[#315F4A]"
+              >
+                {isArabicUi ? "لغتك المحكية" : "Your Spoken Language"}
+              </label>
+              <select
+                id="direct-join-lang"
+                value={joinLangChoice}
+                onChange={(e) => setJoinLangChoice(e.target.value)}
+                className="min-h-[44px] rounded-xl border border-[#E6E5DE] bg-white px-3 py-1.5 text-xs font-semibold text-[#242A26] outline-none focus:border-[#315F4A]"
+              >
+                {SUPPORTED_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label} ({l.native})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {joinAuthError && (
+              <p
+                role="alert"
+                className="rounded-xl border border-[#C76A67]/30 bg-[#C76A67]/10 px-3 py-2 text-xs font-medium text-[#9e3f3c]"
+              >
+                {joinAuthError}
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <Link
+              href="/mode-b"
+              className="inline-flex min-h-[46px] items-center justify-center rounded-full border border-[#E6E5DE] bg-white px-4 text-xs font-semibold text-[#242A26] transition hover:bg-[#F5F3ED]"
+            >
+              {isArabicUi ? "إلغاء" : "Cancel"}
+            </Link>
+            <button
+              type="button"
+              disabled={joiningRoom}
+              onClick={() => void handleDirectGuestJoin()}
+              className="min-h-[46px] rounded-full bg-[#315F4A] px-4 text-xs font-semibold text-white transition hover:bg-[#214536] active:scale-[0.98] disabled:opacity-60"
+            >
+              {joiningRoom
+                ? isArabicUi
+                  ? "جاري الدخول..."
+                  : "Joining..."
+                : isArabicUi
+                  ? "دخول الغرفة"
+                  : "Confirm & Join"}
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (roomError) {
     return (
@@ -1201,65 +1757,104 @@ export default function RoomClient() {
     role === "host" ? room.guestLangCode : room.hostLangCode
   );
 
+  const isTranslatingTurn = messages.some(
+    (m) => m.sender === role && !m.isFinal
+  );
+
+  const nonEmptyMessages = messages.filter(
+    (m) => m.sourceText.trim().length > 0 || m.translatedText.trim().length > 0
+  );
+  const hiddenMessageCount = Math.max(
+    0,
+    nonEmptyMessages.length - visibleMessageLimit
+  );
+  const visibleMessages =
+    hiddenMessageCount > 0
+      ? nonEmptyMessages.slice(-visibleMessageLimit)
+      : nonEmptyMessages;
+
+  const handleTranscriptScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distance < 80;
+    isNearBottomRef.current = near;
+    setShowJumpToLatest(!near);
+  };
+
+  const handleJumpToLatest = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    isNearBottomRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    setShowJumpToLatest(false);
+  };
+
   return (
     <div
       dir={isArabicUi ? "rtl" : "ltr"}
-      className="mx-auto flex h-[100dvh] w-full max-w-xl flex-col overflow-hidden bg-[#F5F3ED] text-[#242A26]"
+      className="mx-auto flex h-[100dvh] w-full max-w-2xl flex-col overflow-hidden bg-[#F5F3ED] text-[#242A26] sm:border-x sm:border-[#E2DFD6]"
     >
       {/* Top NOVA Room Header */}
-      <header className="border-b border-[#E6E5DE] bg-white px-3.5 py-2.5 space-y-2.5 nova-soft-shadow">
+      <header className="border-b border-[#E2DFD6] bg-white px-3.5 py-2.5 space-y-2 nova-soft-shadow">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <Link
               href="/mode-b"
-              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-3 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60"
+              aria-label={isArabicUi ? "العودة لقائمة الغرف" : "Back to rooms"}
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-3 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60"
             >
               <ArrowLeftIcon
                 className={`w-3.5 h-3.5 ${isArabicUi ? "rotate-180" : ""}`}
               />
-              <span>{isArabicUi ? "الغرف" : "Rooms"}</span>
+              <span className="hidden min-[360px]:inline">
+                {isArabicUi ? "الغرف" : "Rooms"}
+              </span>
             </Link>
 
             <span
               dir="ltr"
-              className="inline-flex min-h-[36px] items-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-3 font-mono text-xs font-bold text-[#214536]"
+              className="inline-flex min-h-[36px] max-w-[132px] truncate items-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 font-mono text-[11px] font-bold text-[#214536]"
             >
               {room.id}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {/* Presence + Connection State Pill */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5 min-w-0">
+            {/* Presence + Sync Status Pill */}
             <span
-              className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold ${
+              role="status"
+              aria-live="polite"
+              className={`inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold ${
                 roomSyncStatus === "reconnecting"
-                  ? "border-[#C28B47]/40 bg-[#E8D8BF] text-[#242A26]"
+                  ? "border-[#A87131]/40 bg-[#E8D8BF] text-[#242A26]"
                   : partnerConnected
                     ? "border-[#A8BDA9] bg-[#DCE8DD] text-[#214536]"
-                    : "border-[#C58B62]/40 bg-[#E8D8BF]/70 text-[#242A26]"
+                    : "border-[#C58B62]/45 bg-[#E8D8BF]/75 text-[#242A26]"
               }`}
             >
               <span
+                aria-hidden="true"
                 className={`h-2 w-2 rounded-full ${
                   roomSyncStatus === "reconnecting"
-                    ? "bg-[#C28B47] animate-ping"
+                    ? "bg-[#A87131] animate-ping"
                     : partnerConnected
-                      ? "bg-[#4C8062]"
-                      : "bg-[#C58B62] animate-ping"
+                      ? "bg-[#3E6E53]"
+                      : "bg-[#A86D43] animate-ping"
                 }`}
               />
               <span>
                 {roomSyncStatus === "reconnecting"
                   ? isArabicUi
-                    ? "مزامنة احتياطية"
-                    : "Syncing"
+                    ? "إعادة المزامنة..."
+                    : "Reconnecting..."
                   : partnerConnected
                     ? isArabicUi
                       ? "الشريك متصل"
-                      : "Partner connected"
+                      : "Partner joined"
                     : isArabicUi
                       ? "بانتظار الشريك"
-                      : "Waiting"}
+                      : "Waiting for partner"}
               </span>
             </span>
 
@@ -1269,7 +1864,7 @@ export default function RoomClient() {
                   type="button"
                   onClick={() => void handleCopyTranscript()}
                   aria-label={isArabicUi ? "نسخ المحادثة" : "Copy transcript"}
-                  className="inline-flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 text-xs font-semibold text-[#315F4A] hover:bg-[#DCE8DD]"
+                  className="inline-flex h-11 min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 text-xs font-semibold text-[#315F4A] hover:bg-[#DCE8DD]"
                 >
                   <CopyIcon className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">
@@ -1280,44 +1875,48 @@ export default function RoomClient() {
                   type="button"
                   onClick={handleClearMessages}
                   aria-label={isArabicUi ? "مسح السجل" : "Clear transcript"}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] text-[#777F79] hover:bg-[#C76A67]/15 hover:text-[#C76A67]"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#565E58] hover:bg-[#C76A67]/15 hover:text-[#9B3B38]"
                 >
                   <TrashIcon className="w-4 h-4" />
                 </button>
               </>
             )}
 
-            <button
-              type="button"
-              onClick={() => setShowQR((v) => !v)}
-              aria-label={showQR ? "Hide QR code" : "Show QR code"}
-              className={`inline-flex h-11 items-center gap-1 rounded-full border px-3 text-xs font-semibold transition ${
-                showQR
-                  ? "border-[#315F4A] bg-[#DCE8DD] text-[#214536]"
-                  : "border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
-              }`}
-            >
-              <QrCodeIcon className="w-4 h-4" />
-              <span>{isArabicUi ? "QR" : showQR ? "Hide" : "QR"}</span>
-            </button>
+            {role === "host" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowQR((v) => !v)}
+                  aria-label={showQR ? "Hide QR invite" : "Show QR invite"}
+                  className={`inline-flex h-11 min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-full border px-3 text-xs font-semibold transition ${
+                    showQR
+                      ? "border-[#315F4A] bg-[#DCE8DD] text-[#214536]"
+                      : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
+                  }`}
+                >
+                  <QrCodeIcon className="w-4 h-4" />
+                  <span>{isArabicUi ? "QR" : showQR ? "Hide" : "Invite"}</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => setConfirmEndOpen(true)}
-              aria-label={isArabicUi ? "إنهاء الغرفة للجميع" : "End room for everyone"}
-              className="inline-flex min-h-[44px] items-center rounded-full border border-[#C76A67]/40 bg-[#C76A67]/10 px-3 text-xs font-semibold text-[#C76A67] transition hover:bg-[#C76A67]/20"
-            >
-              {isArabicUi ? "إنهاء" : "End"}
-            </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmEndOpen(true)}
+                  aria-label={isArabicUi ? "إنهاء الغرفة للجميع" : "End room for everyone"}
+                  className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-[#B54F4C]/40 bg-[#C76A67]/12 px-3 text-xs font-semibold text-[#9B3B38] transition hover:bg-[#C76A67]/20"
+                >
+                  {isArabicUi ? "إنهاء" : "End"}
+                </button>
+              </>
+            )}
 
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              aria-label={isArabicUi ? "الإعدادات" : "Open settings drawer"}
-              className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
+              aria-label={isArabicUi ? "الإعدادات" : "Open settings"}
+              className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition ${
                 isBluetoothMicRisk
-                  ? "border-[#C28B47] bg-[#E8D8BF] text-[#242A26]"
-                  : "border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
+                  ? "border-[#A87131] bg-[#E8D8BF] text-[#242A26]"
+                  : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
               }`}
             >
               <SettingsGearIcon className="w-4 h-4" />
@@ -1326,10 +1925,10 @@ export default function RoomClient() {
         </div>
 
         {/* Language Strip */}
-        <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#E6E5DE] bg-[#F5F3ED] px-3 py-1.5 text-xs">
-          <div className="relative flex min-h-[38px] items-center gap-1.5 min-w-0">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#E2DFD6] bg-[#F5F3ED] px-3 py-1 text-xs">
+          <div className="relative flex min-h-[44px] items-center gap-1.5 min-w-0">
             <LanguageFlag code={myLang.code} size={18} />
-            <span className="text-[#777F79] font-medium">
+            <span className="text-[#565E58] font-medium">
               {isArabicUi ? "أنت:" : "You:"}
             </span>
             <span className="inline-flex items-center gap-1 font-semibold text-[#315F4A] truncate">
@@ -1337,7 +1936,7 @@ export default function RoomClient() {
               <ChevronDownIcon className="w-3 h-3 shrink-0" />
             </span>
             <select
-              aria-label="Your spoken language"
+              aria-label={isArabicUi ? "لغتك المحكية" : "Your spoken language"}
               value={myLang.code}
               onChange={(e) => void handleLanguageChange(e.target.value)}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -1350,132 +1949,174 @@ export default function RoomClient() {
             </select>
           </div>
 
-          <span className="text-[#A8BDA9] font-semibold">↔</span>
+          <span className="text-[#565E58] font-semibold" aria-hidden="true">↔</span>
 
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[#777F79] font-medium">
+            <span className="text-[#565E58] font-medium">
               {isArabicUi ? "الشريك:" : "Partner:"}
             </span>
             <LanguageFlag code={partnerLang.code} size={18} />
-            <span className="font-semibold text-[#C58B62] truncate">
+            <span className="font-semibold text-[#A86D43] truncate">
               {getLangName(partnerLang.code, partnerLang.label)}
             </span>
           </div>
         </div>
       </header>
 
-      {/* Collapsible QR Invite Card */}
-      {showQR && (
-        <div className="border-b border-[#E6E5DE] bg-[#F5F3ED] p-3">
-          <RoomQRCode roomId={room.id} compact />
-        </div>
-      )}
-
-      {/* Live Chat Transcript */}
+      {/* Scrollable Live Chat Transcript (+ QR Invite inside scroll stage so small phones never crush content) */}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-4 py-4 space-y-3 overscroll-contain"
+        onScroll={handleTranscriptScroll}
+        className="relative flex flex-1 flex-col overflow-y-auto px-3.5 sm:px-4 py-3.5 space-y-3 overscroll-contain"
       >
-        {messages.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center text-center px-4">
-            <div className="max-w-sm rounded-[24px] border border-[#E6E5DE] bg-white p-5 space-y-2 nova-card-shadow">
+        {showQR && role === "host" && (
+          <div className="shrink-0">
+            <RoomQRCode
+              roomId={room.id}
+              inviteToken={hostInviteToken}
+              passcode={hostPasscode}
+              compact
+            />
+          </div>
+        )}
+
+        {visibleMessages.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center text-center px-2 py-2">
+            <div className="max-w-sm rounded-[24px] border border-[#E2DFD6] bg-white p-4 sm:p-5 space-y-2 nova-card-shadow">
               <p className="text-sm font-semibold text-[#242A26]">
                 {partnerConnected
                   ? isArabicUi
-                    ? "تم اتصال الشريك! اضغط بدء الصوت المباشر وتحدّث."
-                    : "Partner is connected! Tap Start Live Audio below and speak."
+                    ? "انضم شريكك! اضغط «بدء المكالمة» بالأسفل وتحدّث بطبيعتك."
+                    : "Your partner is ready! Tap Start Live Call below and speak."
                   : isArabicUi
-                    ? "شارك رمز QR مع شريكك ثم اضغط بدء الصوت المباشر."
-                    : "Share the QR code with your partner, then tap Start Live Audio."}
+                    ? "شارك رمز QR أعلاه مع شريكك، أو اضغط «بدء المكالمة» للاستعداد."
+                    : "Ask your partner to scan the QR invite above, then tap Start Live Call."}
               </p>
-              <p className="text-xs leading-relaxed text-[#777F79]">
+              <p className="text-xs leading-relaxed text-[#565E58]">
                 {isArabicUi
                   ? `تتحدث بـ ${getLangName(myLang.code, myLang.label)} وتسمع ترجمة شريكك إلى ${getLangName(myLang.code, myLang.label)}.`
-                  : `You speak in ${myLang.label} and hear your partner translated into ${myLang.label}.`}
+                  : `You speak ${myLang.label} and hear your partner translated into ${myLang.label}.`}
               </p>
             </div>
           </div>
         ) : (
-          messages.map((item) => {
-            const isMine = item.sender === role;
-            const mainText = isMine
-              ? item.sourceText || "..."
-              : item.translatedText || "...";
-            const subText = isMine ? item.translatedText : item.sourceText;
-            const mainDir = myLang.rtl ? "rtl" : "ltr";
-            const subDir = partnerLang.rtl ? "rtl" : "ltr";
-            const isReplaying = replayingMessageId === item.id;
-
-            return (
-              <div
-                key={item.id}
-                className={`max-w-[88%] rounded-2xl border px-4 py-3 nova-soft-shadow ${
-                  isMine
-                    ? "self-end border-[#A8BDA9] bg-[#DCE8DD]/65"
-                    : "self-start border-[#E6E5DE] bg-white"
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span
-                    className={`text-[10px] font-bold uppercase tracking-wider ${
-                      isMine ? "text-[#214536]" : "text-[#C58B62]"
-                    }`}
-                  >
-                    {isMine
-                      ? isArabicUi
-                        ? `أنت (${getLangName(myLang.code, myLang.label)})`
-                        : `You (${myLang.label})`
-                      : isArabicUi
-                        ? `الشريك → ${getLangName(myLang.code, myLang.label)}`
-                        : `Partner → ${myLang.label}`}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    {!item.isFinal && (
-                      <span className="text-[10px] font-semibold text-[#315F4A] animate-pulse">
-                        {isArabicUi ? "مباشر" : "live"}
-                      </span>
-                    )}
-                    {item.isFinal && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleReplayMessage(
-                            item,
-                            myLang.code,
-                            partnerLang.code
-                          )
-                        }
-                        aria-label={
-                          isArabicUi ? "إعادة تشغيل الصوت" : "Replay audio"
-                        }
-                        className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[10px] font-semibold transition active:scale-95 ${
-                          isReplaying
-                            ? "border-[#315F4A] bg-[#315F4A] text-white"
-                            : "border-[#E6E5DE] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
-                        }`}
-                      >
-                        <SpeakerPlayIcon className="w-3.5 h-3.5" />
-                        <span>{isArabicUi ? "تشغيل" : "Play"}</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <p
-                  dir={mainDir}
-                  className="text-[15px] font-semibold leading-snug text-[#242A26]"
+          <>
+            {hiddenMessageCount > 0 && (
+              <div className="flex justify-center pb-1">
+                <button
+                  type="button"
+                  onClick={() => setVisibleMessageLimit((n) => n + 60)}
+                  className="min-h-[44px] rounded-full border border-[#E2DFD6] bg-white px-4 text-xs font-semibold text-[#315F4A] nova-soft-shadow transition hover:bg-[#DCE8DD]/55"
                 >
-                  {mainText}
-                </p>
-                {subText && (
-                  <p dir={subDir} className="mt-1 text-xs text-[#777F79]">
-                    {subText}
-                  </p>
-                )}
+                  {isArabicUi
+                    ? `عرض الرسائل الأقدم (+${hiddenMessageCount})`
+                    : `Show earlier messages (+${hiddenMessageCount})`}
+                </button>
               </div>
-            );
-          })
+            )}
+            {visibleMessages.map((item) => {
+              const isMine = item.sender === role;
+              const mainText = isMine
+                ? item.sourceText || item.translatedText
+                : item.translatedText || item.sourceText;
+              const subText = isMine
+                ? item.sourceText
+                  ? item.translatedText
+                  : ""
+                : item.translatedText
+                  ? item.sourceText
+                  : "";
+              const mainDir = myLang.rtl ? "rtl" : "ltr";
+              const subDir = partnerLang.rtl ? "rtl" : "ltr";
+              const isReplaying = replayingMessageId === item.id;
+
+              return (
+                <div
+                  key={item.id}
+                  className={`max-w-[90%] rounded-2xl px-4 py-3 nova-soft-shadow ${
+                    !item.isFinal ? "border border-dashed" : "border"
+                  } ${
+                    isMine
+                      ? "self-end border-[#A8BDA9] bg-[#DCE8DD]/65"
+                      : "self-start border-[#E2DFD6] bg-white"
+                  }`}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider ${
+                        isMine ? "text-[#214536]" : "text-[#A86D43]"
+                      }`}
+                    >
+                      {isMine
+                        ? isArabicUi
+                          ? `أنت (${getLangName(myLang.code, myLang.label)})`
+                          : `You (${myLang.label})`
+                        : isArabicUi
+                          ? `الشريك → ${getLangName(myLang.code, myLang.label)}`
+                          : `Partner → ${myLang.label}`}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      {!item.isFinal && (
+                        <span className="rounded-full bg-[#DCE8DD] px-2 py-0.5 text-[10px] font-semibold text-[#214536] animate-pulse">
+                          {isArabicUi ? "يُترجم الآن..." : "translating..."}
+                        </span>
+                      )}
+                      {item.isFinal && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleReplayMessage(
+                              item,
+                              myLang.code,
+                              partnerLang.code
+                            )
+                          }
+                          aria-label={
+                            isArabicUi
+                              ? "إعادة تشغيل الصوت"
+                              : "Replay translation audio"
+                          }
+                          className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
+                            isReplaying
+                              ? "border-[#315F4A] bg-[#315F4A] text-white"
+                              : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
+                          }`}
+                        >
+                          <SpeakerPlayIcon className="w-3.5 h-3.5" />
+                          <span>{isArabicUi ? "إعادة" : "Play"}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <p
+                    dir={mainDir}
+                    className="text-[15px] font-semibold leading-snug text-[#242A26]"
+                  >
+                    {mainText}
+                  </p>
+                  {subText && (
+                    <p dir={subDir} className="mt-1 text-xs text-[#565E58]">
+                      {subText}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {showJumpToLatest && visibleMessages.length > 0 && (
+          <div className="sticky bottom-1 flex justify-center pointer-events-none">
+            <button
+              type="button"
+              onClick={handleJumpToLatest}
+              className="pointer-events-auto min-h-[36px] rounded-full bg-[#214536] px-3.5 text-[11px] font-semibold text-white shadow-md transition hover:bg-[#315F4A]"
+            >
+              {isArabicUi ? "الأحدث ↓" : "Latest ↓"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -1489,7 +2130,7 @@ export default function RoomClient() {
       />
 
       {/* Live Voice Call & Translation Control Bar */}
-      <footer className="border-t border-[#E6E5DE] bg-white px-3.5 py-3 space-y-2.5 shadow-[0_-4px_20px_-8px_rgba(33,69,54,0.1)]">
+      <footer className="border-t border-[#E2DFD6] bg-white px-3.5 py-2.5 space-y-2 shadow-[0_-4px_20px_-8px_rgba(33,69,54,0.1)]">
         <RecoveryBanner
           isOnline={isOnline}
           errorMessage={statusError}
@@ -1499,58 +2140,93 @@ export default function RoomClient() {
           compact
         />
 
-        {/* Status / Timer / Ducking Row */}
+        {/* Status / Timer / Audio Meter Row */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span
+              role="status"
+              aria-live="polite"
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                callState === "connected"
-                  ? "border-[#A8BDA9] bg-[#DCE8DD] text-[#214536]"
-                  : callState === "connecting" || callState === "reconnecting"
-                    ? "border-[#C28B47]/40 bg-[#E8D8BF]/70 text-[#242A26]"
-                    : isRunning
-                      ? "border-[#A8BDA9] bg-[#F5F3ED] text-[#315F4A]"
-                      : "border-[#E6E5DE] bg-[#F5F3ED] text-[#777F79]"
+                liveStatus === "error"
+                  ? "border-[#B54F4C]/40 bg-[#C76A67]/12 text-[#9B3B38]"
+                  : isRunning && (partnerOutputLevel > 0.04 || isSpeaking)
+                    ? "border-[#315F4A] bg-[#315F4A] text-white"
+                    : callState === "connected"
+                      ? "border-[#A8BDA9] bg-[#DCE8DD] text-[#214536]"
+                      : callState === "connecting" || callState === "reconnecting" || liveStatus === "connecting" || liveStatus === "reconnecting"
+                        ? "border-[#A87131]/40 bg-[#E8D8BF]/85 text-[#242A26]"
+                        : isRunning
+                          ? "border-[#A8BDA9] bg-[#DCE8DD]/75 text-[#214536]"
+                          : "border-[#E2DFD6] bg-[#F5F3ED] text-[#565E58]"
               }`}
             >
               <span
+                aria-hidden="true"
                 className={`h-2 w-2 rounded-full ${
-                  callState === "connected"
-                    ? "bg-[#4C8062]"
-                    : callState === "connecting" || callState === "reconnecting"
-                      ? "bg-[#C28B47] animate-ping"
-                      : isRunning
-                        ? "bg-[#315F4A] animate-pulse"
-                        : "bg-[#A8BDA9]"
+                  liveStatus === "error"
+                    ? "bg-[#B54F4C]"
+                    : isRunning && (partnerOutputLevel > 0.04 || isSpeaking)
+                      ? "bg-white animate-ping"
+                      : callState === "connected"
+                        ? "bg-[#3E6E53]"
+                        : callState === "connecting" || callState === "reconnecting" || liveStatus === "connecting" || liveStatus === "reconnecting"
+                          ? "bg-[#A87131] animate-ping"
+                          : isRunning
+                            ? "bg-[#315F4A] animate-pulse"
+                            : "bg-[#A8BDA9]"
                 }`}
               />
               <span>
-                {callState === "connected"
+                {liveStatus === "error"
                   ? isArabicUi
-                    ? "المكالمة متصلة"
-                    : "Call Connected"
-                  : callState === "connecting"
+                    ? "تعذر التوصيل"
+                    : "Connection issue"
+                  : liveStatus === "connecting"
                     ? isArabicUi
-                      ? "جاري ربط المكالمة..."
-                      : "Connecting Call..."
-                    : callState === "reconnecting"
+                      ? "جاري تهيئة الصوت..."
+                      : "Connecting..."
+                    : liveStatus === "reconnecting" || callState === "reconnecting"
                       ? isArabicUi
-                        ? "إعادة ربط المكالمة..."
+                        ? "جاري إعادة التوصيل..."
                         : "Reconnecting..."
-                      : isRunning
+                      : callState === "connecting"
                         ? isArabicUi
-                          ? `ترجمة AI · ${liveStatus}`
-                          : `AI Live · ${liveStatus}`
-                        : isArabicUi
-                          ? "جاهز للمكالمة"
-                          : "Ready for Call"}
+                          ? "جاري ربط المكالمة..."
+                          : "Connecting call..."
+                        : isRunning && isMuted
+                          ? isArabicUi
+                            ? "الميكروفون مكتوم"
+                            : "Mic muted"
+                          : isRunning && partnerOutputLevel > 0.04
+                            ? isArabicUi
+                              ? "ينطق الترجمة"
+                              : "Playing translation"
+                            : isRunning && isSpeaking
+                              ? isArabicUi
+                                ? "يسمع صوتك..."
+                                : "Hearing voice..."
+                              : isRunning && isTranslatingTurn
+                                ? isArabicUi
+                                  ? "جاري الترجمة..."
+                                  : "Translating..."
+                                : callState === "connected"
+                                  ? isArabicUi
+                                    ? "مكالمة مباشرة"
+                                    : "Call active"
+                                  : isRunning
+                                    ? isArabicUi
+                                      ? "يستمع الآن"
+                                      : "Listening"
+                                    : isArabicUi
+                                      ? "جاهز للبدء"
+                                      : "Ready"}
               </span>
             </span>
 
             {(callState === "connected" || callElapsedSec > 0) && (
               <span
                 dir="ltr"
-                className="rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#214536] tabular-nums"
+                className="rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#214536] tabular-nums"
               >
                 {formatCallDuration(callElapsedSec)}
               </span>
@@ -1571,19 +2247,23 @@ export default function RoomClient() {
           </div>
         </div>
 
-        {/* Capture Mode + Voice Call / Smart Ducking Mode Strip */}
+        {/* Listening Style + Voice Call / Balance Strip */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="inline-flex min-h-[44px] items-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] p-0.5">
+          <div
+            className="inline-flex min-h-[44px] items-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] p-0.5"
+            role="group"
+            aria-label={isArabicUi ? "طريقة الاستماع" : "Listening style"}
+          >
             <button
               type="button"
               onClick={() => handleSetCaptureMode("vad")}
               className={`min-h-[44px] min-w-[44px] rounded-full px-3 text-[11px] font-semibold transition ${
                 captureMode === "vad"
                   ? "bg-[#214536] text-white"
-                  : "text-[#777F79] hover:text-[#242A26]"
+                  : "text-[#565E58] hover:text-[#242A26]"
               }`}
             >
-              {isArabicUi ? "تلقائي" : "Auto-VAD"}
+              {isArabicUi ? "حر اليدين" : "Hands-free"}
             </button>
             <button
               type="button"
@@ -1591,10 +2271,10 @@ export default function RoomClient() {
               className={`min-h-[44px] min-w-[44px] rounded-full px-3 text-[11px] font-semibold transition ${
                 captureMode === "ptt"
                   ? "bg-[#214536] text-white"
-                  : "text-[#777F79] hover:text-[#242A26]"
+                  : "text-[#565E58] hover:text-[#242A26]"
               }`}
             >
-              {isArabicUi ? "اضغط للتحدث" : "Push-to-Talk"}
+              {isArabicUi ? "اضغط للتحدث" : "Hold to talk"}
             </button>
           </div>
 
@@ -1606,18 +2286,18 @@ export default function RoomClient() {
                 className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition active:scale-[0.98] ${
                   callState !== "idle" && callState !== "disconnected"
                     ? "border-[#315F4A] bg-[#DCE8DD] text-[#214536]"
-                    : "border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
+                    : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
                 }`}
               >
                 <PhoneCallIcon className="w-3.5 h-3.5" />
                 <span>
                   {callState !== "idle" && callState !== "disconnected"
                     ? isArabicUi
-                      ? "الصوت P2P مفعّل"
-                      : "Voice Call On"
+                      ? "الصوت المباشر مفعّل"
+                      : "Live Voice On"
                     : isArabicUi
-                      ? "تفعيل المكالمة"
-                      : "Join Voice Call"}
+                      ? "تشغيل المكالمة"
+                      : "Turn On Voice"}
                 </span>
               </button>
             )}
@@ -1627,34 +2307,38 @@ export default function RoomClient() {
               onClick={handleToggleOriginalVoice}
               aria-label={
                 originalVoiceEnabled
-                  ? "Original Voice + AI Dubbing"
-                  : "AI Translation Only"
+                  ? isArabicUi
+                    ? "سماع صوت الشريك مع الترجمة"
+                    : "Hear partner voice lowered during translation"
+                  : isArabicUi
+                    ? "سماع صوت الترجمة فقط"
+                    : "Hear translated voice only"
               }
               className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition active:scale-[0.98] ${
                 originalVoiceEnabled
                   ? isVoiceDucked
                     ? "border-[#315F4A] bg-[#DCE8DD]/80 text-[#214536]"
-                    : "border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/50"
-                  : "border-[#C58B62]/50 bg-[#E8D8BF] text-[#242A26]"
+                    : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/50"
+                  : "border-[#A86D43]/45 bg-[#E8D8BF] text-[#242A26]"
               }`}
             >
               {originalVoiceEnabled ? (
                 <SpeakerPlayIcon className="w-3.5 h-3.5 text-[#315F4A]" />
               ) : (
-                <VolumeMutedIcon className="w-3.5 h-3.5 text-[#C58B62]" />
+                <VolumeMutedIcon className="w-3.5 h-3.5 text-[#A86D43]" />
               )}
               <span>
                 {originalVoiceEnabled
                   ? isVoiceDucked
                     ? isArabicUi
-                      ? "خفض الصوت (AI)"
-                      : "Original (Ducked)"
+                      ? "خفض الصوت تلقائيًا"
+                      : "Voice Auto-Lowered"
                     : isArabicUi
-                      ? "الأصلي + AI"
-                      : "Original + AI"
+                      ? "الصوت + الترجمة"
+                      : "Voice + Translation"
                   : isArabicUi
-                    ? "ترجمة AI فقط"
-                    : "AI Only"}
+                    ? "الترجمة فقط"
+                    : "Translation Only"}
               </span>
             </button>
           </div>
@@ -1667,19 +2351,19 @@ export default function RoomClient() {
               <button
                 type="button"
                 onClick={() => handleStartLive(true)}
-                className="inline-flex min-h-[48px] flex-1 min-w-[160px] items-center justify-center gap-2 rounded-full bg-[#315F4A] px-5 text-xs font-semibold text-white shadow-[0_6px_16px_-4px_rgba(33,69,54,0.38)] transition hover:bg-[#214536] active:scale-[0.98]"
+                className="inline-flex min-h-[48px] flex-1 min-w-[150px] items-center justify-center gap-2 rounded-full bg-[#315F4A] px-5 text-xs sm:text-sm font-semibold text-white shadow-[0_6px_16px_-4px_rgba(33,69,54,0.38)] transition hover:bg-[#214536] active:scale-[0.98]"
               >
                 <PhoneCallIcon className="w-4 h-4" />
                 <span>
-                  {isArabicUi ? "بدء مكالمة بالترجمة" : "Start Live Call"}
+                  {isArabicUi ? "بدء المكالمة المترجمة" : "Start Live Call"}
                 </span>
               </button>
               <button
                 type="button"
                 onClick={() => handleStartLive(false)}
-                className="inline-flex min-h-[48px] items-center justify-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-4 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60 active:scale-[0.98]"
+                className="inline-flex min-h-[48px] items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-4 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60 active:scale-[0.98]"
               >
-                {isArabicUi ? "ترجمة AI فقط" : "AI Dub Only"}
+                {isArabicUi ? "ترجمة فقط" : "Translation Only"}
               </button>
             </>
           ) : (
@@ -1689,14 +2373,14 @@ export default function RoomClient() {
                 onClick={() => void handleToggleMute()}
                 className={`inline-flex min-h-[48px] flex-1 min-w-[116px] items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition active:scale-[0.98] ${
                   isMuted
-                    ? "bg-[#E8D8BF] text-[#242A26] border border-[#C28B47]/40"
-                    : "border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
+                    ? "bg-[#E8D8BF] text-[#242A26] border border-[#A87131]/40"
+                    : "border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
                 }`}
               >
                 {isMuted ? (
                   <MicIcon className="w-4 h-4 text-[#315F4A]" />
                 ) : (
-                  <MicOffIcon className="w-4 h-4 text-[#777F79]" />
+                  <MicOffIcon className="w-4 h-4 text-[#565E58]" />
                 )}
                 <span>
                   {isMuted
@@ -1708,7 +2392,7 @@ export default function RoomClient() {
                         ? "يتحدث..."
                         : "Speaking..."
                       : isArabicUi
-                        ? "كتم الميكروفون"
+                        ? "كتم"
                         : "Mute Mic"}
                 </span>
               </button>
@@ -1742,10 +2426,10 @@ export default function RoomClient() {
               <button
                 type="button"
                 onClick={handleToggleStart}
-                className="inline-flex min-h-[48px] items-center justify-center gap-1.5 rounded-full border border-[#C76A67]/40 bg-[#C76A67]/12 px-4 text-xs font-semibold text-[#C76A67] transition hover:bg-[#C76A67]/20 active:scale-[0.98]"
+                className="inline-flex min-h-[48px] items-center justify-center gap-1.5 rounded-full border border-[#B54F4C]/40 bg-[#C76A67]/12 px-4 text-xs font-semibold text-[#9B3B38] transition hover:bg-[#C76A67]/20 active:scale-[0.98]"
               >
                 <PhoneOffIcon className="w-4 h-4" />
-                <span>{isArabicUi ? "إنهاء المكالمة" : "End Call"}</span>
+                <span>{isArabicUi ? "إنهاء" : "End"}</span>
               </button>
             </>
           )}
@@ -1851,8 +2535,13 @@ export default function RoomClient() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="end-room-confirm-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !endingRoom) {
+              setConfirmEndOpen(false);
+            }
+          }}
         >
-          <div className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.25)] p-5 space-y-4">
+          <div className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.25)] p-5 space-y-4">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h2
@@ -1863,7 +2552,7 @@ export default function RoomClient() {
                     ? "إنهاء الغرفة للجميع؟"
                     : "End Room for Everyone?"}
                 </h2>
-                <p className="mt-1 text-xs leading-relaxed text-[#777F79]">
+                <p className="mt-1 text-xs leading-relaxed text-[#565E58]">
                   {isArabicUi
                     ? "سيتم فصل الهاتفين وإغلاق رابط الدعوة لهذه الغرفة."
                     : "This disconnects both phones and permanently closes this room invite."}
@@ -1873,7 +2562,7 @@ export default function RoomClient() {
                 type="button"
                 onClick={() => setConfirmEndOpen(false)}
                 aria-label={isArabicUi ? "إلغاء" : "Cancel"}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E6E5DE] bg-white text-[#242A26]"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E2DFD6] bg-white text-[#242A26]"
               >
                 <CloseIcon className="w-4 h-4" />
               </button>

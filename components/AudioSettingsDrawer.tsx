@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckIcon,
   CloseIcon,
@@ -68,6 +68,22 @@ export default function AudioSettingsDrawer({
 }: AudioSettingsDrawerProps) {
   const settings = useNovaSettings();
   const [exportedFeedback, setExportedFeedback] = useState(false);
+  const exportedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (exportedTimerRef.current) clearTimeout(exportedTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -102,7 +118,8 @@ export default function AudioSettingsDrawer({
     triggerHaptic(settings.hapticsEnabled, 10);
     await onExportTranscript();
     setExportedFeedback(true);
-    setTimeout(() => setExportedFeedback(false), 1800);
+    if (exportedTimerRef.current) clearTimeout(exportedTimerRef.current);
+    exportedTimerRef.current = setTimeout(() => setExportedFeedback(false), 1800);
   };
 
   const hasLiveAudioControls = Boolean(onSelectMic) || micDevices.length > 0;
@@ -114,10 +131,13 @@ export default function AudioSettingsDrawer({
       aria-modal="true"
       aria-labelledby="audio-settings-title"
       dir={isRtl ? "rtl" : "ltr"}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.24)] max-h-[90dvh] flex flex-col overflow-hidden">
+      <div className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.24)] max-h-[90dvh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#E6E5DE] bg-white px-5 py-4 shrink-0">
+        <div className="flex items-center justify-between border-b border-[#E2DFD6] bg-white px-5 py-4 shrink-0">
           <div>
             <h2
               id="audio-settings-title"
@@ -125,13 +145,13 @@ export default function AudioSettingsDrawer({
             >
               {dict.settingsTitle}
             </h2>
-            <p className="text-xs text-[#777F79]">{dict.settingsSubtitle}</p>
+            <p className="text-xs text-[#565E58]">{dict.settingsSubtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label={dict.closeLabel}
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] transition hover:bg-[#DCE8DD]"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] transition hover:bg-[#DCE8DD]"
           >
             <CloseIcon className="w-4 h-4" />
           </button>
@@ -151,7 +171,7 @@ export default function AudioSettingsDrawer({
                     <HeadphonesIcon className="w-4 h-4" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold text-[#242A26] truncate">
+                    <div className="text-xs font-semibold text-[#242A26] leading-snug">
                       {dict.settingsFields.earbudTestTitle}
                     </div>
                     <div className="text-[11px] text-[#777F79] leading-snug">
@@ -201,9 +221,13 @@ export default function AudioSettingsDrawer({
                     micDevices.map((d) => (
                       <option key={d.deviceId} value={d.deviceId}>
                         {d.classification === "builtin"
-                          ? "[Built-in] "
+                          ? isRtl
+                            ? "[الهاتف] "
+                            : "[Phone Mic] "
                           : d.classification === "bluetooth"
-                            ? "[BT HFP!] "
+                            ? isRtl
+                              ? "[سماعة بلوتوث] "
+                              : "[Bluetooth Headset] "
                             : ""}
                         {d.label}
                       </option>
@@ -219,13 +243,15 @@ export default function AudioSettingsDrawer({
             )}
 
             {onBeepTest && (
-              <div className="rounded-xl border border-[#E6E5DE] bg-[#F5F3ED] p-3 flex items-center justify-between gap-3">
+              <div className="rounded-xl border border-[#E2DFD6] bg-[#F5F3ED] p-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-semibold text-[#242A26]">
                     {dict.settingsFields.stereoOutputLabel}
                   </div>
-                  <div className="text-[11px] text-[#777F79]">
-                    440Hz Left (-1.0) → 880Hz Right (+1.0)
+                  <div className="text-[11px] text-[#565E58]">
+                    {isRtl
+                      ? "نغمة في الأذن اليسرى ثم اليمنى"
+                      : "Play a quick tone in Left then Right ear"}
                   </div>
                 </div>
                 <button
@@ -233,67 +259,78 @@ export default function AudioSettingsDrawer({
                   onClick={onBeepTest}
                   className="shrink-0 min-h-[44px] rounded-xl bg-[#315F4A] px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-[#214536] active:scale-[0.98]"
                 >
-                  Beep (L → R)
+                  {isRtl ? "اختبار" : "Play Tone"}
                 </button>
               </div>
             )}
 
+            <p className="text-[11px] leading-snug text-[#565E58]">
+              {isRtl
+                ? "ملاحظة: يمر صوت الترجمة عبر السماعة المتصلة بهاتفك أو مكبر الصوت حسب إعدادات النظام."
+                : "Audio output plays through your phone speaker or connected Bluetooth earbuds via system audio routing."}
+            </p>
+
             {showDiagnostics && (
-              <div
-                dir="ltr"
-                className="rounded-xl border border-[#E6E5DE] bg-[#F5F3ED] p-3 space-y-1.5 font-mono text-[11px]"
-              >
-                <div className="flex items-center justify-between text-[#777F79]">
-                  <span>AudioContext</span>
-                  <strong
-                    className={
-                      audioCtxState === "running"
-                        ? "text-[#4C8062]"
-                        : "text-[#C28B47]"
-                    }
-                  >
-                    {audioCtxState}
-                  </strong>
-                </div>
-                <div className="flex items-center justify-between text-[#777F79]">
-                  <span>Output Channels</span>
-                  <strong
-                    className={
-                      audioChannelCount >= 2 ? "text-[#315F4A]" : "text-[#C28B47]"
-                    }
-                  >
-                    {audioChannelCount}ch
-                  </strong>
-                </div>
-                {typeof chunkCount === "number" && (
-                  <div className="flex items-center justify-between text-[#777F79]">
-                    <span>Audio Chunks</span>
-                    <strong className="text-[#242A26]">{chunkCount}</strong>
-                  </div>
-                )}
-                {lastPanChannel !== undefined && (
-                  <div className="flex items-center justify-between text-[#777F79]">
-                    <span>Active Pan</span>
-                    <strong className="text-[#315F4A]">
-                      {lastPanChannel === "left"
-                        ? "L (-1.0)"
-                        : lastPanChannel === "right"
-                          ? "R (+1.0)"
-                          : "Center (0.0)"}
+              <details className="rounded-xl border border-[#E2DFD6] bg-[#F5F3ED] px-3 py-2">
+                <summary className="cursor-pointer select-none text-[11px] font-semibold text-[#565E58] py-1">
+                  {isRtl ? "تفاصيل حالة الصوت" : "Audio status details"}
+                </summary>
+                <div
+                  dir="ltr"
+                  className="mt-2 pt-2 border-t border-[#E2DFD6] space-y-1.5 font-mono text-[11px]"
+                >
+                  <div className="flex items-center justify-between text-[#565E58]">
+                    <span>Playback engine</span>
+                    <strong
+                      className={
+                        audioCtxState === "running"
+                          ? "text-[#3E6E53]"
+                          : "text-[#A87131]"
+                      }
+                    >
+                      {audioCtxState === "running" ? "Active" : audioCtxState}
                     </strong>
                   </div>
-                )}
-                <div className="flex items-center justify-between text-[#777F79]">
-                  <span>Screen Wake Lock</span>
-                  <strong
-                    className={
-                      wakeLockActive ? "text-[#4C8062]" : "text-[#777F79]"
-                    }
-                  >
-                    {wakeLockActive ? "Active" : "Standby"}
-                  </strong>
+                  <div className="flex items-center justify-between text-[#565E58]">
+                    <span>Earbud channels</span>
+                    <strong
+                      className={
+                        audioChannelCount >= 2 ? "text-[#315F4A]" : "text-[#A87131]"
+                      }
+                    >
+                      {audioChannelCount >= 2 ? "Stereo (2ch)" : `${audioChannelCount}ch`}
+                    </strong>
+                  </div>
+                  {typeof chunkCount === "number" && (
+                    <div className="flex items-center justify-between text-[#565E58]">
+                      <span>Translated clips</span>
+                      <strong className="text-[#242A26]">{chunkCount}</strong>
+                    </div>
+                  )}
+                  {lastPanChannel !== undefined && (
+                    <div className="flex items-center justify-between text-[#565E58]">
+                      <span>Last ear routed</span>
+                      <strong className="text-[#315F4A]">
+                        {lastPanChannel === "left"
+                          ? "Left ear"
+                          : lastPanChannel === "right"
+                            ? "Right ear"
+                            : "Both ears"}
+                      </strong>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-[#565E58]">
+                    <span>Keep awake</span>
+                    <strong
+                      className={
+                        wakeLockActive ? "text-[#3E6E53]" : "text-[#565E58]"
+                      }
+                    >
+                      {wakeLockActive ? "Active" : "Standby"}
+                    </strong>
+                  </div>
                 </div>
-              </div>
+              </details>
             )}
 
             {audioDebugNotice && (

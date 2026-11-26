@@ -25,9 +25,9 @@ interface EarbudTestModalProps {
 function classificationTag(classification: ClassifiedMicDevice["classification"]) {
   switch (classification) {
     case "builtin":
-      return "[Built-in]";
+      return "[Phone Mic]";
     case "bluetooth":
-      return "[Bluetooth HFP!]";
+      return "[Bluetooth]";
     case "external":
       return "[External]";
     default:
@@ -100,6 +100,15 @@ export default function EarbudTestModal({
     stopMicCheck();
     onClose();
   }, [onClose, stopAllAudio, stopMicCheck]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, handleClose]);
 
   // Real-time level meter animation loop while modal is open
   useEffect(() => {
@@ -269,26 +278,29 @@ export default function EarbudTestModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="earbud-test-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
     >
-      <div className="w-full max-w-lg rounded-t-[28px] sm:rounded-[28px] border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.24)] max-h-[92dvh] overflow-y-auto">
+      <div className="w-full max-w-lg rounded-t-[28px] sm:rounded-[28px] border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.24)] max-h-[92dvh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E6E5DE] bg-white px-5 py-4">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E2DFD6] bg-white px-5 py-4">
           <div>
             <h2
               id="earbud-test-title"
               className="text-base font-bold tracking-tight text-[#242A26]"
             >
-              Earbud Stereo &amp; A2DP Test
+              Earbud Left &amp; Right Check
             </h2>
-            <p className="text-xs text-[#777F79]">
-              Verify hard Left/Right panning on your Bluetooth earbuds
+            <p className="text-xs text-[#565E58]">
+              Make sure each person hears only their own language
             </p>
           </div>
           <button
             type="button"
             onClick={handleClose}
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] transition hover:bg-[#DCE8DD]"
-            aria-label="Close earbud test modal"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] transition hover:bg-[#DCE8DD]"
+            aria-label="Close earbud check"
           >
             <CloseIcon className="w-4 h-4" />
           </button>
@@ -296,7 +308,7 @@ export default function EarbudTestModal({
 
         <div className="space-y-4 p-5">
           {audioError && (
-            <div className="rounded-2xl border border-[#C76A67]/40 bg-[#C76A67]/10 px-3.5 py-2.5 text-xs text-[#242A26]">
+            <div className="rounded-2xl border border-[#B54F4C]/40 bg-[#C76A67]/10 px-3.5 py-2.5 text-xs text-[#9B3B38]">
               {audioError}
             </div>
           )}
@@ -310,29 +322,29 @@ export default function EarbudTestModal({
               className={`group relative flex flex-col items-start justify-between rounded-2xl border p-4 text-left transition active:scale-[0.98] nova-soft-shadow ${
                 activeChannel === "left"
                   ? "border-[#315F4A] bg-[#DCE8DD]/65"
-                  : "border-[#E6E5DE] bg-white hover:border-[#315F4A]/50"
+                  : "border-[#E2DFD6] bg-white hover:border-[#315F4A]/50"
               }`}
             >
               <div className="flex w-full items-center justify-between">
                 <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#315F4A] text-base font-bold text-white">
                   L
                 </span>
-                <span className="font-mono text-[11px] font-medium text-[#315F4A]">
-                  pan -1.0
+                <span className="text-[11px] font-semibold text-[#315F4A]">
+                  Left Ear
                 </span>
               </div>
 
               <div className="mt-4">
                 <div className="text-sm font-semibold text-[#242A26]">
-                  Test Left Ear
+                  Test Left Earbud
                 </div>
-                <div className="mt-0.5 text-[11px] text-[#777F79]">
-                  Speaker A ({langALabel})
+                <div className="mt-0.5 text-[11px] text-[#565E58]">
+                  Person A ({langALabel})
                 </div>
               </div>
 
               {/* Real-time post-pan meter */}
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#E6E5DE]">
+              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#E2DFD6]">
                 <div
                   className="h-full rounded-full bg-[#315F4A] transition-[width] duration-75"
                   style={{ width: `${Math.round(levels.left * 100)}%` }}
@@ -346,32 +358,32 @@ export default function EarbudTestModal({
               onClick={() => void handlePlayChannel("right")}
               className={`group relative flex flex-col items-start justify-between rounded-2xl border p-4 text-left transition active:scale-[0.98] nova-soft-shadow ${
                 activeChannel === "right"
-                  ? "border-[#C58B62] bg-[#E8D8BF]/70"
-                  : "border-[#E6E5DE] bg-white hover:border-[#C58B62]/60"
+                  ? "border-[#A86D43] bg-[#E8D8BF]/70"
+                  : "border-[#E2DFD6] bg-white hover:border-[#A86D43]/60"
               }`}
             >
               <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#C58B62] text-base font-bold text-white">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#A86D43] text-base font-bold text-white">
                   R
                 </span>
-                <span className="font-mono text-[11px] font-medium text-[#C58B62]">
-                  pan +1.0
+                <span className="text-[11px] font-semibold text-[#A86D43]">
+                  Right Ear
                 </span>
               </div>
 
               <div className="mt-4">
                 <div className="text-sm font-semibold text-[#242A26]">
-                  Test Right Ear
+                  Test Right Earbud
                 </div>
-                <div className="mt-0.5 text-[11px] text-[#777F79]">
-                  Speaker B ({langBLabel})
+                <div className="mt-0.5 text-[11px] text-[#565E58]">
+                  Person B ({langBLabel})
                 </div>
               </div>
 
               {/* Real-time post-pan meter */}
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#E6E5DE]">
+              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#E2DFD6]">
                 <div
-                  className="h-full rounded-full bg-[#C58B62] transition-[width] duration-75"
+                  className="h-full rounded-full bg-[#A86D43] transition-[width] duration-75"
                   style={{ width: `${Math.round(levels.right * 100)}%` }}
                 />
               </div>
@@ -385,11 +397,11 @@ export default function EarbudTestModal({
               onClick={() => void handleTogglePingPong()}
               className={`flex-1 min-h-[44px] min-w-[170px] rounded-xl px-4 py-3 text-sm font-semibold transition active:scale-[0.98] ${
                 isPingPong
-                  ? "bg-[#C28B47] text-white hover:bg-[#C58B62]"
+                  ? "bg-[#A87131] text-white hover:bg-[#915E24]"
                   : "bg-[#214536] text-white hover:bg-[#315F4A]"
               }`}
             >
-              {isPingPong ? "Stop L ↔ R Loop" : "Auto Alternate L ↔ R"}
+              {isPingPong ? "Stop Alternating" : "Alternate Left ↔ Right"}
             </button>
 
             <button
@@ -398,28 +410,22 @@ export default function EarbudTestModal({
               className={`min-h-[44px] rounded-xl border px-4 py-3 text-sm font-medium transition active:scale-[0.98] ${
                 activeChannel === "both"
                   ? "border-[#315F4A] bg-[#DCE8DD] text-[#214536]"
-                  : "border-[#E6E5DE] bg-white text-[#242A26] hover:bg-[#F5F3ED]"
+                  : "border-[#E2DFD6] bg-white text-[#242A26] hover:bg-[#F5F3ED]"
               }`}
             >
-              Both (0.0)
+              Both Ears
             </button>
           </div>
 
-          {/* Built-in Mic Lock Check (Critical A2DP Test) */}
-          <div className="rounded-2xl border border-[#E6E5DE] bg-white p-4 space-y-3 nova-soft-shadow">
+          {/* Built-in Mic Check */}
+          <div className="rounded-2xl border border-[#E2DFD6] bg-white p-4 space-y-3 nova-soft-shadow">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-[#242A26]">
-                  Simultaneous Phone Mic Check (A2DP Lock)
+                  Check Phone Microphone Separation
                 </h3>
-                <p className="mt-0.5 text-xs leading-relaxed text-[#777F79]">
-                  Enable the phone&apos;s built-in mic while playing Left/Right
-                  tones to confirm your Bluetooth earbuds stay in{" "}
-                  <span className="text-[#242A26] font-semibold">
-                    A2DP Stereo
-                  </span>{" "}
-                  and don&apos;t drop to{" "}
-                  <span className="text-[#242A26] font-semibold">HFP Mono</span>.
+                <p className="mt-0.5 text-xs leading-relaxed text-[#565E58]">
+                  Test speaking into your phone mic while playing Left/Right tones to ensure your earbuds keep separate stereo channels.
                 </p>
               </div>
             </div>
@@ -433,37 +439,37 @@ export default function EarbudTestModal({
                     ? stopMicCheck()
                     : void handleEnableMic(selectedDeviceId || undefined)
                 }
-                className={`min-h-[42px] rounded-xl px-4 py-2 text-xs font-semibold transition ${
+                className={`min-h-[44px] rounded-xl px-4 py-2 text-xs font-semibold transition ${
                   micActive
-                    ? "border border-[#C76A67]/40 bg-[#C76A67]/10 text-[#C76A67] hover:bg-[#C76A67]/20"
+                    ? "border border-[#B54F4C]/40 bg-[#C76A67]/10 text-[#9B3B38] hover:bg-[#C76A67]/20"
                     : "bg-[#315F4A] text-white hover:bg-[#214536]"
                 } disabled:opacity-60`}
               >
                 {micLoading
-                  ? "Requesting Mic..."
+                  ? "Checking mic..."
                   : micActive
                     ? "Stop Mic Check"
-                    : "Enable Built-in Mic Check"}
+                    : "Test Phone Microphone"}
               </button>
 
               {activeMicInfo && (
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                     activeMicInfo.isBluetoothRisk
-                      ? "bg-[#E8D8BF]/70 text-[#242A26] border border-[#C28B47]/40"
+                      ? "bg-[#E8D8BF]/70 text-[#242A26] border border-[#A87131]/40"
                       : "bg-[#DCE8DD] text-[#214536] border border-[#A8BDA9]"
                   }`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
                   {activeMicInfo.isBluetoothRisk
-                    ? "Bluetooth Mic (Mono Risk)"
-                    : "Non-BT Mic Locked"}
+                    ? "Bluetooth Mic (may merge ears)"
+                    : "Phone Mic Locked"}
                 </span>
               )}
             </div>
 
             {micError && (
-              <div className="rounded-xl border border-[#C76A67]/40 bg-[#C76A67]/10 px-3 py-2 text-xs text-[#C76A67]">
+              <div className="rounded-xl border border-[#B54F4C]/40 bg-[#C76A67]/10 px-3 py-2 text-xs text-[#9B3B38]">
                 {micError}
               </div>
             )}
@@ -472,19 +478,19 @@ export default function EarbudTestModal({
             <div className="space-y-1.5">
               <label
                 htmlFor="mic-device-select"
-                className="block text-[11px] font-semibold uppercase tracking-wider text-[#777F79]"
+                className="block text-[11px] font-semibold uppercase tracking-wider text-[#565E58]"
               >
-                Input Microphone ({micDevices.length} detected)
+                Microphone ({micDevices.length} detected)
               </label>
               <select
                 id="mic-device-select"
                 value={selectedDeviceId}
                 onChange={(e) => void handleSelectDevice(e.target.value)}
-                className="w-full min-h-[44px] rounded-xl border border-[#E6E5DE] bg-[#F5F3ED] px-3 py-2.5 text-xs text-[#242A26] outline-none focus:border-[#315F4A]"
+                className="w-full min-h-[44px] rounded-xl border border-[#E2DFD6] bg-[#F5F3ED] px-3 py-2.5 text-xs text-[#242A26] outline-none focus:border-[#315F4A]"
               >
                 {micDevices.length === 0 ? (
                   <option value="">
-                    Tap &quot;Enable Built-in Mic Check&quot; to list mics
+                    Tap &quot;Test Phone Microphone&quot; to detect mics
                   </option>
                 ) : (
                   micDevices.map((dev) => (
@@ -497,16 +503,14 @@ export default function EarbudTestModal({
             </div>
 
             {activeMicInfo?.isBluetoothRisk && (
-              <div className="rounded-xl border border-[#C28B47]/40 bg-[#E8D8BF]/50 px-3 py-2 text-xs text-[#242A26]">
-                Warning: A Bluetooth headset microphone is active. Your phone
-                may force earbuds into mono HFP mode. Switch the dropdown above
-                to your phone&apos;s built-in microphone.
+              <div className="rounded-xl border border-[#A87131]/40 bg-[#E8D8BF]/50 px-3 py-2 text-xs text-[#242A26]">
+                A Bluetooth headset microphone is active, which may merge left and right earbud channels. Switch above to your phone&apos;s built-in microphone.
               </div>
             )}
 
             {micActive && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px] text-[#777F79]">
+                <div className="flex items-center justify-between text-[11px] text-[#565E58]">
                   <span className="truncate max-w-[70%]">
                     Active: {activeMicInfo?.label}
                   </span>
@@ -514,7 +518,7 @@ export default function EarbudTestModal({
                     {Math.round(micLevel * 100)}%
                   </span>
                 </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-[#E6E5DE]">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[#E2DFD6]">
                   <div
                     className="h-full rounded-full bg-[#315F4A] transition-[width] duration-75"
                     style={{ width: `${Math.round(micLevel * 100)}%` }}
@@ -524,22 +528,26 @@ export default function EarbudTestModal({
             )}
           </div>
 
-          {/* Diagnostics & Guidance */}
-          <div
-            dir="ltr"
-            className="rounded-2xl border border-[#E6E5DE] bg-white px-3.5 py-2.5 font-mono text-[11px] text-[#777F79] flex flex-wrap items-center justify-between gap-2"
-          >
-            <span>ctx: {diagnostics.contextState}</span>
-            <span>
-              out:{" "}
-              {diagnostics.channelCount > 0
-                ? `${diagnostics.channelCount}ch (max ${diagnostics.maxChannelCount})`
-                : "tap L or R"}
-            </span>
-            <span>
-              {diagnostics.sampleRate > 0 ? `${diagnostics.sampleRate} Hz` : "—"}
-            </span>
-          </div>
+          <details className="rounded-2xl border border-[#E2DFD6] bg-white px-3.5 py-2.5 text-xs text-[#565E58]">
+            <summary className="cursor-pointer select-none font-semibold">
+              Channel status details
+            </summary>
+            <div
+              dir="ltr"
+              className="mt-2 pt-2 border-t border-[#E2DFD6] font-mono text-[11px] flex flex-wrap items-center justify-between gap-2"
+            >
+              <span>Engine: {diagnostics.contextState}</span>
+              <span>
+                Channels:{" "}
+                {diagnostics.channelCount > 0
+                  ? `${diagnostics.channelCount}ch (max ${diagnostics.maxChannelCount})`
+                  : "tap Left or Right"}
+              </span>
+              <span>
+                {diagnostics.sampleRate > 0 ? `${diagnostics.sampleRate} Hz` : "—"}
+              </span>
+            </div>
+          </details>
         </div>
       </div>
     </div>

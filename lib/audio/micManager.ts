@@ -105,13 +105,25 @@ export async function listMicDevices(): Promise<MicListResult> {
   };
 }
 
-function buildAudioConstraints(deviceId?: string): MediaStreamConstraints {
-  // Disable AEC/NS/AGC so Android Chrome stays in MODE_NORMAL + Bluetooth A2DP Stereo
+export interface AcquireMicOptions {
+  /** Enable browser AEC/NS/AGC (true for Mode B speakerphone calls; keep false for Mode A BT A2DP lock). */
+  voiceCallAec?: boolean;
+  /** Invoked once if the active hardware microphone track ends unexpectedly mid-session. */
+  onTrackEnded?: () => void;
+}
+
+function buildAudioConstraints(
+  deviceId?: string,
+  options?: AcquireMicOptions
+): MediaStreamConstraints {
+  // Keep AEC/NS/AGC disabled in Mode A so Android Chrome stays in MODE_NORMAL + Bluetooth A2DP Stereo
   // instead of switching to VoIP MODE_IN_COMMUNICATION (HFP Mono).
+  // Mode B passes voiceCallAec: true so two-phone speaker calls suppress acoustic echo feedback.
+  const enableAec = Boolean(options?.voiceCallAec);
   const audio: MediaTrackConstraints = {
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: false,
+    echoCancellation: enableAec,
+    noiseSuppression: enableAec,
+    autoGainControl: enableAec,
   };
 
   if (deviceId) {
@@ -127,6 +139,7 @@ export class MicManager {
   private monitorAnalyser: AnalyserNode | null = null;
   private monitorBuffer: Uint8Array<ArrayBuffer> | null = null;
   private ownedMonitorCtx: AudioContext | null = null;
+  private trackEndedCleanup: (() => void) | null = null;
 
   public getActiveMic(): ActiveMicInfo | null {
     return this.activeInfo;
@@ -136,7 +149,10 @@ export class MicManager {
    * Acquires a microphone stream, automatically preferring the built-in phone
    * microphone to prevent Bluetooth earbuds from dropping from A2DP Stereo to HFP Mono.
    */
-  public async acquireMic(preferredDeviceId?: string): Promise<ActiveMicInfo> {
+  public async acquireMic(
+    preferredDeviceId?: string,
+    options?: AcquireMicOptions
+  ): Promise<ActiveMicInfo> {
     if (
       typeof navigator === "undefined" ||
       !navigator.mediaDevices?.getUserMedia
@@ -156,11 +172,13 @@ export class MicManager {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia(
-        buildAudioConstraints(targetDeviceId)
+        buildAudioConstraints(targetDeviceId, options)
       );
     } catch {
       // Fallback if exact deviceId is unavailable (e.g. device unplugged)
-      stream = await navigator.mediaDevices.getUserMedia(buildAudioConstraints());
+      stream = await navigator.mediaDevices.getUserMedia(
+        buildAudioConstraints(undefined, options)
+      );
     }
 
     // Re-enumerate now that permission is granted and device labels are visible
@@ -197,11 +215,11 @@ export class MicManager {
         stream.getTracks().forEach((t) => t.stop());
         try {
           stream = await navigator.mediaDevices.getUserMedia(
-            buildAudioConstraints(better.deviceId)
+            buildAudioConstraints(better.deviceId, options)
           );
         } catch {
           stream = await navigator.mediaDevices.getUserMedia(
-            buildAudioConstraints()
+            buildAudioConstraints(undefined, options)
           );
         }
       }
@@ -229,6 +247,16 @@ export class MicManager {
       channelCount: finalSettings?.channelCount,
       isBluetoothRisk: finalMatched.classification === "bluetooth",
     };
+
+    if (finalTrack && options?.onTrackEnded) {
+      const handleEnded = () => {
+        options.onTrackEnded?.();
+      };
+      finalTrack.addEventListener("ended", handleEnded, { once: true });
+      this.trackEndedCleanup = () => {
+        finalTrack.removeEventListener("ended", handleEnded);
+      };
+    }
 
     return this.activeInfo;
   }
@@ -297,6 +325,10 @@ export class MicManager {
 
   public releaseMic(): void {
     this.stopLevelMeter();
+    if (this.trackEndedCleanup) {
+      this.trackEndedCleanup();
+      this.trackEndedCleanup = null;
+    }
     if (this.activeInfo) {
       this.activeInfo.stream.getTracks().forEach((track) => track.stop());
       this.activeInfo = null;

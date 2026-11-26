@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans_Arabic, Inter, JetBrains_Mono } from "next/font/google";
+import HtmlLocaleSync from "@/components/nova/HtmlLocaleSync";
 import "./globals.css";
 
 const inter = Inter({
@@ -43,7 +44,6 @@ export const viewport: Viewport = {
   themeColor: "#F5F3ED",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover",
 };
 
@@ -54,6 +54,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${ibmPlexArabic.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[#F5F3ED] text-[#242A26] selection:bg-[#DCE8DD]">
+        <HtmlLocaleSync />
         {children}
       </body>
     </html>

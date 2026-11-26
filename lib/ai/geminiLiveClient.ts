@@ -26,6 +26,7 @@ export interface LiveTranscriptTurn {
   sourceText: string;
   translatedText: string;
   isFinal: boolean;
+  hasAudio?: boolean;
   timestamp: number;
 }
 
@@ -155,6 +156,9 @@ export class GeminiLiveTranslatorClient {
   private resolvedSpeaker: "A" | "B" | null = null;
   private lastResolvedSpeaker: "A" | "B" = "A";
   private manualDisconnect = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectGeneration = 0;
 
   constructor(opts: GeminiLiveOptions) {
     this.options = {
@@ -284,6 +288,7 @@ export class GeminiLiveTranslatorClient {
       sourceText: hasSpeakableText(cleanSource) ? cleanSource : "",
       translatedText: hasSpeakableText(cleanTranslated) ? cleanTranslated : "",
       isFinal,
+      hasAudio: this.turnHasAudio,
       timestamp: Date.now(),
     });
   }
@@ -291,16 +296,71 @@ export class GeminiLiveTranslatorClient {
   public async connect(): Promise<void> {
     this.disconnect();
     this.manualDisconnect = false;
+    this.reconnectAttempts = 0;
     this.resetTurnState();
+    await this.openConnection();
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (this.manualDisconnect || this.reconnectTimer) return;
+    const maxAttempts = 3;
+    if (this.reconnectAttempts >= maxAttempts) {
+      this.setStatus("error", reason);
+      this.callbacks.onError?.(reason);
+      return;
+    }
+
+    const attempt = this.reconnectAttempts + 1;
+    this.reconnectAttempts = attempt;
+    const delayMs = Math.min(3500, 800 * Math.pow(2, attempt - 1));
+    const gen = this.connectGeneration;
+
+    this.setStatus(
+      "reconnecting",
+      `Refreshing live translation session (attempt ${attempt}/${maxAttempts})...`
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.manualDisconnect || gen !== this.connectGeneration) return;
+      if (this.session) {
+        try {
+          this.session.close();
+        } catch {
+          // Ignore old close
+        }
+        this.session = null;
+      }
+      this.resetTurnState();
+      void this.openConnection().catch((err) => {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : "Failed to reconnect live translation session.";
+        this.scheduleReconnect(msg);
+      });
+    }, delayMs);
+  }
+
+  private async openConnection(): Promise<void> {
+    const gen = ++this.connectGeneration;
     this.setStatus("connecting", "Requesting secure session token...");
 
     const voiceName = this.options.voiceName || "Aoede";
     const response = await fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({
-        langA: this.options.langALabel,
-        langB: this.options.langBLabel,
+        langA: this.options.langACode,
+        langB: this.options.langBCode,
         voiceName,
       }),
     });
@@ -308,6 +368,8 @@ export class GeminiLiveTranslatorClient {
     const payload = (await response.json()) as Partial<SessionInitPayload> & {
       error?: string;
     };
+
+    if (this.manualDisconnect || gen !== this.connectGeneration) return;
 
     if (!response.ok || !payload.token || !payload.model) {
       const errMsg = payload.error || "Failed to initialize translation session.";
@@ -354,9 +416,11 @@ export class GeminiLiveTranslatorClient {
       },
       callbacks: {
         onopen: () => {
+          if (gen !== this.connectGeneration) return;
           this.setStatus("connecting", "Handshaking with Gemini Live...");
         },
         onmessage: (msg: LiveServerMessage) => {
+          if (gen !== this.connectGeneration) return;
           try {
             this.handleServerMessage(msg);
           } catch (err) {
@@ -366,33 +430,61 @@ export class GeminiLiveTranslatorClient {
           }
         },
         onerror: (err: ErrorEvent) => {
+          if (gen !== this.connectGeneration || this.manualDisconnect) return;
           const msg = err.message || "WebSocket error during live translation.";
-          this.setStatus("error", msg);
-          this.callbacks.onError?.(msg);
+          this.callbacks.onDebugNotice?.(msg);
         },
         onclose: (ev: CloseEvent) => {
+          if (gen !== this.connectGeneration) return;
           if (this.manualDisconnect) {
             this.setStatus("disconnected");
             return;
           }
+          // Flush any active partial utterance so it isn't silently lost on disconnect
+          if (
+            hasSpeakableText(this.turnInputText) ||
+            hasSpeakableText(this.turnOutputText)
+          ) {
+            this.emitTranscript(true);
+            this.resetTurnState();
+          }
+          this.session = null;
           const reason = ev.reason
             ? `Closed (${ev.code}): ${ev.reason}`
             : `Connection closed (${ev.code})`;
-          this.setStatus("disconnected", reason);
+          this.scheduleReconnect(reason);
         },
       },
     });
+
+    if (this.manualDisconnect || gen !== this.connectGeneration) {
+      try {
+        liveSession.close();
+      } catch {
+        // Ignore superseded connection
+      }
+      return;
+    }
 
     this.session = liveSession;
   }
 
   private handleServerMessage(msg: LiveServerMessage): void {
     if (msg.setupComplete) {
+      this.reconnectAttempts = 0;
       this.setStatus("connected", "Live bidirectional interpreter ready");
     }
 
     if (msg.goAway) {
       this.callbacks.onGoAway?.(msg.goAway.timeLeft);
+      if (
+        hasSpeakableText(this.turnInputText) ||
+        hasSpeakableText(this.turnOutputText)
+      ) {
+        this.emitTranscript(true);
+        this.resetTurnState();
+      }
+      this.scheduleReconnect("Session lifetime limit approaching; refreshing...");
     }
 
     const sc = msg.serverContent;
@@ -500,12 +592,16 @@ export class GeminiLiveTranslatorClient {
     }
 
     const base64 = int16ToBase64(pcm16);
-    this.session.sendRealtimeInput({
-      audio: {
-        data: base64,
-        mimeType: "audio/pcm;rate=16000",
-      },
-    });
+    try {
+      this.session.sendRealtimeInput({
+        audio: {
+          data: base64,
+          mimeType: "audio/pcm;rate=16000",
+        },
+      });
+    } catch {
+      // Ignore transient frame send failure while WebSocket closes/reconnects
+    }
   }
 
   /**
@@ -513,11 +609,17 @@ export class GeminiLiveTranslatorClient {
    */
   public sendAudioStreamEnd(): void {
     if (!this.session || this.status !== "connected") return;
-    this.session.sendRealtimeInput({ audioStreamEnd: true });
+    try {
+      this.session.sendRealtimeInput({ audioStreamEnd: true });
+    } catch {
+      // Ignore transient stream-end error while reconnecting
+    }
   }
 
   public disconnect(): void {
     this.manualDisconnect = true;
+    this.connectGeneration += 1;
+    this.clearReconnectTimer();
     if (this.session) {
       try {
         this.session.close();

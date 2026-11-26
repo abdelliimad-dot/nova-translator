@@ -13,27 +13,50 @@ import { useNovaSettings } from "@/lib/settingsStore";
 interface QrScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onDecodedRoom: (roomId: string) => void;
+  onDecodedRoom: (roomId: string, inviteToken?: string) => void;
 }
 
-export function extractRoomIdFromQr(rawPayload: string): string | null {
+export interface DecodedRoomInvite {
+  roomId: string;
+  inviteToken?: string;
+}
+
+export function extractRoomJoinFromQr(
+  rawPayload: string
+): DecodedRoomInvite | null {
   const trimmed = rawPayload.trim();
   if (!trimmed) return null;
 
-  // 1) Match full or relative invite URL: https://.../room/UD6JM4 or /room/UD6JM4
-  const pathMatch = /\/(?:room|mode-b)\/([a-zA-Z0-9]{4,12})(?:[/?#]|$)/i.exec(
+  // 1) Match full or relative invite URL: https://.../room/<ID>#invite=<TOKEN>
+  const pathMatch = /\/(?:room|mode-b)\/([a-zA-Z0-9]{6,20})(?:[/?#]|$)/i.exec(
     trimmed
   );
   if (pathMatch?.[1]) {
-    return pathMatch[1].toUpperCase();
+    let inviteToken: string | undefined;
+    const hashIndex = trimmed.indexOf("#");
+    if (hashIndex >= 0) {
+      const hashParams = new URLSearchParams(trimmed.slice(hashIndex + 1));
+      const token = hashParams.get("invite")?.trim();
+      if (token && token.length >= 8 && token.length <= 128) {
+        inviteToken = token;
+      }
+    }
+    return {
+      roomId: pathMatch[1].toUpperCase(),
+      inviteToken,
+    };
   }
 
-  // 2) Match raw room code (e.g. UD6JM4)
-  if (/^[a-zA-Z0-9]{4,12}$/.test(trimmed)) {
-    return trimmed.toUpperCase();
+  // 2) Match raw room code
+  if (/^[a-zA-Z0-9]{6,20}$/.test(trimmed)) {
+    return { roomId: trimmed.toUpperCase() };
   }
 
   return null;
+}
+
+export function extractRoomIdFromQr(rawPayload: string): string | null {
+  return extractRoomJoinFromQr(rawPayload)?.roomId ?? null;
 }
 
 function decodeCanvasWithJsQr(
@@ -137,8 +160,8 @@ export default function QrScannerModal({
 
   const handleDecodedPayload = useCallback(
     (payload: string) => {
-      const roomId = extractRoomIdFromQr(payload);
-      if (!roomId) {
+      const decoded = extractRoomJoinFromQr(payload);
+      if (!decoded) {
         setError(
           isArabicUi
             ? "تمت قراءة الرمز، لكنه ليس رابط أو رمز غرفة NOVA صالحًا."
@@ -148,7 +171,7 @@ export default function QrScannerModal({
       }
       stopCamera();
       setError(null);
-      onDecodedRoom(roomId);
+      onDecodedRoom(decoded.roomId, decoded.inviteToken);
       return true;
     },
     [isArabicUi, onDecodedRoom, stopCamera]

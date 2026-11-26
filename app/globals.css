@@ -3,6 +3,7 @@
 :root {
   --nova-bg: #f5f3ed;
   --nova-surface: #ffffff;
+  --nova-surface-subtle: #efeae0;
   --nova-primary: #315f4a;
   --nova-primary-dark: #214536;
   --nova-primary-soft: #dce8dd;
@@ -10,11 +11,11 @@
   --nova-sand: #e8d8bf;
   --nova-warm-accent: #c58b62;
   --nova-text: #242a26;
-  --nova-text-secondary: #777f79;
-  --nova-border: #e6e5de;
-  --nova-success: #4c8062;
-  --nova-warning: #c28b47;
-  --nova-danger: #c76a67;
+  --nova-text-secondary: #565e58;
+  --nova-border: #e2dfd6;
+  --nova-success: #3e6e53;
+  --nova-warning: #a87131;
+  --nova-danger: #b54f4c;
 }
 
 @theme inline {
@@ -30,6 +31,17 @@ body {
   color: var(--nova-text);
   font-family: var(--font-inter), var(--font-arabic), system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--nova-primary);
+  outline-offset: 2px;
 }
 
 .nova-card-shadow {

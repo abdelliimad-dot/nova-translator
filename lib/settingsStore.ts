@@ -23,6 +23,8 @@ export const NOVA_VOICE_PRESETS: readonly VoicePresetMeta[] = [
 
 export interface NovaSettings {
   uiLocale: UiLocale;
+  preferredLangA: string;
+  preferredLangB: string;
   autoDetect: boolean;
   captureMode: CapturePreference;
   vadSensitivity: VadSensitivity;
@@ -34,6 +36,8 @@ export interface NovaSettings {
 
 const DEFAULT_SETTINGS: NovaSettings = {
   uiLocale: "en",
+  preferredLangA: "ar",
+  preferredLangB: "en",
   autoDetect: true,
   captureMode: "vad",
   vadSensitivity: "balanced",

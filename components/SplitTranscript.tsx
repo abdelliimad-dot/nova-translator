@@ -6,6 +6,7 @@ import AudioSettingsDrawer from "@/components/AudioSettingsDrawer";
 import AudioVisualizer from "@/components/AudioVisualizer";
 import EarbudTestModal from "@/components/EarbudTestModal";
 import LanguageFlag from "@/components/nova/LanguageFlag";
+import MoreLanguagesModal from "@/components/nova/MoreLanguagesModal";
 import RecoveryBanner from "@/components/nova/RecoveryBanner";
 import {
   ArrowLeftIcon,
@@ -49,6 +50,7 @@ interface SplitTranscriptProps {
   inputLevel: number;
   outputLevels: ChannelLevels;
   speakerOverride: SpeakerOverride;
+  sessionElapsedSec?: number;
   activeMicLabel: string | null;
   isBluetoothMicRisk: boolean;
   micDevices: ClassifiedMicDevice[];
@@ -71,6 +73,7 @@ interface SplitTranscriptProps {
   onBeepTest: () => void;
   onClearTurns: () => void;
   onReplayTurn: (turn: LiveTranscriptTurn, perspective: "A" | "B") => void;
+  onChangeLanguagePair?: (nextA: string, nextB: string) => void;
   onDismissError?: () => void;
 }
 
@@ -78,79 +81,147 @@ function StatusBadge({
   status,
   isMuted,
   isSpeaking,
+  isTranslating,
+  isPlayingOutput,
   isArabicUi,
 }: {
   status: LiveConnectionStatus;
   isMuted: boolean;
   isSpeaking: boolean;
+  isTranslating: boolean;
+  isPlayingOutput: boolean;
   isArabicUi: boolean;
 }) {
   if (status === "error") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#C76A67]/40 bg-[#C76A67]/15 px-2.5 py-1 text-[11px] font-semibold text-[#C76A67]">
-        <span className="h-2 w-2 rounded-full bg-[#C76A67]" />
-        {isArabicUi ? "خطأ" : "Error"}
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#B54F4C]/40 bg-[#C76A67]/12 px-2.5 py-1 text-[11px] font-semibold text-[#9B3B38]"
+      >
+        <span className="h-2 w-2 rounded-full bg-[#B54F4C]" aria-hidden="true" />
+        {isArabicUi ? "خطأ اتصال" : "Connection issue"}
       </span>
     );
   }
   if (status === "connecting" || status === "reconnecting") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#C28B47]/40 bg-[#E8D8BF]/70 px-2.5 py-1 text-[11px] font-semibold text-[#242A26]">
-        <span className="h-2 w-2 rounded-full bg-[#C28B47] animate-ping" />
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#A87131]/35 bg-[#E8D8BF]/85 px-2.5 py-1 text-[11px] font-semibold text-[#242A26]"
+      >
+        <span
+          className="h-2 w-2 rounded-full bg-[#A87131] animate-ping"
+          aria-hidden="true"
+        />
         {status === "reconnecting"
           ? isArabicUi
-            ? "إعادة اتصال"
-            : "Reconnecting"
+            ? "إعادة الاتصال..."
+            : "Reconnecting..."
           : isArabicUi
-            ? "جاري الاتصال"
-            : "Connecting"}
+            ? "جاري التوصيل..."
+            : "Connecting..."}
       </span>
     );
   }
   if (status === "connected" && isMuted) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 py-1 text-[11px] font-semibold text-[#777F79]">
-        <span className="h-2 w-2 rounded-full bg-[#777F79]" />
-        {isArabicUi ? "مكتوم" : "Muted"}
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 py-1 text-[11px] font-semibold text-[#565E58]"
+      >
+        <span className="h-2 w-2 rounded-full bg-[#565E58]" aria-hidden="true" />
+        {isArabicUi ? "الميكروفون مكتوم" : "Mic muted"}
+      </span>
+    );
+  }
+  if (status === "connected" && isPlayingOutput) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#315F4A] bg-[#315F4A] px-2.5 py-1 text-[11px] font-semibold text-white"
+      >
+        <span
+          className="h-2 w-2 rounded-full bg-white animate-pulse"
+          aria-hidden="true"
+        />
+        {isArabicUi ? "ينطق الترجمة" : "Speaking translation"}
+      </span>
+    );
+  }
+  if (status === "connected" && isSpeaking) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#315F4A] bg-[#214536] px-2.5 py-1 text-[11px] font-semibold text-white"
+      >
+        <span
+          className="h-2 w-2 rounded-full bg-[#DCE8DD] animate-ping"
+          aria-hidden="true"
+        />
+        {isArabicUi ? "يسمع صوتك..." : "Hearing voice..."}
+      </span>
+    );
+  }
+  if (status === "connected" && isTranslating) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#A87131]/35 bg-[#E8D8BF]/85 px-2.5 py-1 text-[11px] font-semibold text-[#242A26]"
+      >
+        <span
+          className="h-2 w-2 rounded-full bg-[#A87131] animate-pulse"
+          aria-hidden="true"
+        />
+        {isArabicUi ? "جاري الترجمة..." : "Translating..."}
       </span>
     );
   }
   if (status === "connected") {
     return (
       <span
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-          isSpeaking
-            ? "border-[#315F4A] bg-[#315F4A] text-white"
-            : "border-[#A8BDA9] bg-[#DCE8DD] text-[#214536]"
-        }`}
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[#A8BDA9] bg-[#DCE8DD] px-2.5 py-1 text-[11px] font-semibold text-[#214536]"
       >
         <span
-          className={`h-2 w-2 rounded-full ${
-            isSpeaking ? "bg-white animate-ping" : "bg-[#4C8062] animate-pulse"
-          }`}
+          className="h-2 w-2 rounded-full bg-[#3E6E53] animate-pulse"
+          aria-hidden="true"
         />
-        {isSpeaking
-          ? isArabicUi
-            ? "يستمع..."
-            : "Translating"
-          : isArabicUi
-            ? "مباشر"
-            : "Live"}
+        {isArabicUi ? "يستمع الآن" : "Listening"}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 py-1 text-[11px] font-semibold text-[#777F79]">
-      <span className="h-2 w-2 rounded-full bg-[#A8BDA9]" />
+    <span
+      role="status"
+      aria-live="polite"
+      className="inline-flex items-center gap-1.5 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 py-1 text-[11px] font-semibold text-[#565E58]"
+    >
+      <span className="h-2 w-2 rounded-full bg-[#A8BDA9]" aria-hidden="true" />
       {isArabicUi ? "جاهز" : "Ready"}
     </span>
   );
+}
+
+const VISIBLE_WINDOW_STEP = 60;
+
+function formatElapsedTime(totalSec: number): string {
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 function TranscriptPane({
   perspective,
   ownerLang,
   otherLang,
+  earTag,
   earbudLabel,
   accent,
   outputLevel,
@@ -165,6 +236,7 @@ function TranscriptPane({
   perspective: "A" | "B";
   ownerLang: SupportedLanguage;
   otherLang: SupportedLanguage;
+  earTag: "L" | "R";
   earbudLabel: string;
   accent: "forest" | "sand";
   outputLevel: number;
@@ -177,49 +249,90 @@ function TranscriptPane({
   onReplayTurn: (turn: LiveTranscriptTurn, perspective: "A" | "B") => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const [visibleLimit, setVisibleLimit] = useState(VISIBLE_WINDOW_STEP);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+
+  const visibleTurns = turns.filter(
+    (t) => t.sourceText.trim().length > 0 || t.translatedText.trim().length > 0
+  );
+  const hiddenCount = Math.max(0, visibleTurns.length - visibleLimit);
+  const renderedTurns =
+    hiddenCount > 0 ? visibleTurns.slice(-visibleLimit) : visibleTurns;
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distance < 80;
+    isNearBottomRef.current = near;
+    setShowJumpToLatest(!near);
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) {
+    if (!el || visibleTurns.length === 0) return;
+    if (isNearBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [turns]);
+  }, [visibleTurns.length, turns]);
+
+  const jumpToLatest = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    isNearBottomRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    setShowJumpToLatest(false);
+  };
 
   const isOutputActive = outputLevel > 0.04;
-  const ownerDisplay = isArabicUi
-    ? (LANGUAGE_ARABIC_NAMES[ownerLang.code] ?? ownerLang.label)
-    : ownerLang.label;
-  const otherDisplay = isArabicUi
-    ? (LANGUAGE_ARABIC_NAMES[otherLang.code] ?? otherLang.label)
-    : otherLang.label;
+  const ownerDisplay =
+    ownerLang.code === "ar"
+      ? "العربية"
+      : isArabicUi
+        ? (LANGUAGE_ARABIC_NAMES[ownerLang.code] ?? ownerLang.label)
+        : ownerLang.label;
+  const otherDisplay =
+    otherLang.code === "ar"
+      ? "العربية"
+      : isArabicUi
+        ? (LANGUAGE_ARABIC_NAMES[otherLang.code] ?? otherLang.label)
+        : otherLang.label;
 
   return (
     <section
-      className={`relative flex flex-1 min-h-0 flex-col justify-between px-3.5 py-2.5 transition-colors ${
+      aria-label={
+        isArabicUi
+          ? `لوحة المتحدث ${perspective}: ${ownerDisplay}`
+          : `Person ${perspective} view: ${ownerDisplay}`
+      }
+      className={`relative flex flex-1 min-h-0 flex-col justify-between px-3.5 py-2 transition-colors ${
         accent === "forest" ? "bg-[#F5F3ED]" : "bg-[#EFECE3]"
       } ${rotated ? "rotate-180" : ""}`}
     >
       {/* Header Strip inside rotated/upright container */}
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#E6E5DE]">
-        <div className="flex items-center gap-2 min-w-0">
-          <LanguageFlag code={ownerLang.code} size={22} />
+      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#E2DFD6]">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <LanguageFlag code={ownerLang.code} size={20} />
           <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold truncate ${
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold truncate ${
               accent === "forest"
                 ? "bg-[#315F4A] text-white"
-                : "bg-[#C58B62] text-white"
+                : "bg-[#A86D43] text-white"
             }`}
           >
             {isArabicUi
-              ? `المتحدث ${perspective} · ${ownerDisplay}`
+              ? `الشخص ${perspective} · ${ownerDisplay}`
               : `Person ${perspective} · ${ownerDisplay}`}
           </span>
-          {/* Keep physical pan/earbud label strictly LTR */}
-          <span
-            dir="ltr"
-            className="truncate rounded-full border border-[#E6E5DE] bg-white px-2 py-0.5 font-mono text-[10px] font-medium text-[#777F79]"
-          >
-            {earbudLabel}
+          <span className="inline-flex items-center gap-1 truncate rounded-full border border-[#E2DFD6] bg-white px-2 py-0.5 text-[11px] font-medium text-[#565E58]">
+            <span
+              dir="ltr"
+              className="font-mono text-[10px] font-bold text-[#315F4A]"
+            >
+              {earTag}
+            </span>
+            <span className="truncate">{earbudLabel}</span>
           </span>
         </div>
 
@@ -236,12 +349,13 @@ function TranscriptPane({
       {/* Scrolling Live Transcript */}
       <div
         ref={scrollRef}
-        className="flex flex-col flex-1 overflow-y-auto py-2.5 space-y-2.5 overscroll-contain"
+        onScroll={handleScroll}
+        className="relative flex flex-col flex-1 overflow-y-auto py-2 space-y-2 overscroll-contain"
       >
-        {turns.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center text-center px-4">
-            <div className="max-w-xs rounded-2xl border border-[#E6E5DE] bg-white/80 px-4 py-3 nova-soft-shadow">
-              <p className="text-xs leading-relaxed text-[#777F79]">
+        {renderedTurns.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center text-center px-3">
+            <div className="max-w-xs rounded-2xl border border-[#E2DFD6] bg-white/85 px-4 py-3 nova-soft-shadow">
+              <p className="text-xs leading-relaxed text-[#565E58]">
                 {isArabicUi ? (
                   <>
                     تحدّث بـ{" "}
@@ -252,8 +366,8 @@ function TranscriptPane({
                     <span className="font-semibold text-[#242A26]">
                       {otherDisplay}
                     </span>
-                    . ستظهر الترجمة هنا وتُسمع في{" "}
-                    <span dir="ltr" className="font-semibold text-[#315F4A]">
+                    . سيظهر الكلام هنا ويُسمع في{" "}
+                    <span className="font-semibold text-[#315F4A]">
                       {earbudLabel}
                     </span>
                     .
@@ -270,7 +384,7 @@ function TranscriptPane({
                     </span>
                     . Translations for Person {perspective} appear here and play
                     in{" "}
-                    <span dir="ltr" className="font-semibold text-[#315F4A]">
+                    <span className="font-semibold text-[#315F4A]">
                       {earbudLabel}
                     </span>
                     .
@@ -280,81 +394,118 @@ function TranscriptPane({
             </div>
           </div>
         ) : (
-          turns.map((turn) => {
-            const isIncomingTranslation = turn.speaker !== perspective;
-            const otherPerspective = perspective === "A" ? "B" : "A";
-            const mainText = isIncomingTranslation
-              ? turn.translatedText || "..."
-              : turn.sourceText || "...";
-            const subText = isIncomingTranslation
-              ? turn.sourceText
-              : turn.translatedText;
-            const mainDir = ownerLang.rtl ? "rtl" : "ltr";
-            const subDir = otherLang.rtl ? "rtl" : "ltr";
-            const isReplaying = replayingTurnKey === `${perspective}-${turn.id}`;
-
-            return (
-              <div
-                key={turn.id}
-                className={`max-w-[90%] rounded-2xl border px-3.5 py-2.5 nova-soft-shadow ${
-                  isIncomingTranslation
-                    ? accent === "forest"
-                      ? "self-start border-[#A8BDA9] bg-[#DCE8DD]/65"
-                      : "self-start border-[#C58B62]/45 bg-[#E8D8BF]/65"
-                    : "self-end border-[#E6E5DE] bg-white"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#777F79]">
-                    {isIncomingTranslation
-                      ? isArabicUi
-                        ? `المتحدث ${otherPerspective} → ${ownerDisplay}`
-                        : `Person ${otherPerspective} → ${earbudLabel}`
-                      : isArabicUi
-                        ? `أنت (${ownerDisplay})`
-                        : `You (${ownerDisplay})`}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    {!turn.isFinal && (
-                      <span className="text-[10px] font-semibold text-[#315F4A] animate-pulse">
-                        {isArabicUi ? "مباشر" : "live"}
-                      </span>
-                    )}
-                    {turn.isFinal && (
-                      <button
-                        type="button"
-                        onClick={() => onReplayTurn(turn, perspective)}
-                        aria-label={
-                          isArabicUi ? "إعادة تشغيل الصوت" : "Replay turn audio"
-                        }
-                        className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[10px] font-semibold transition active:scale-95 ${
-                          isReplaying
-                            ? "border-[#315F4A] bg-[#315F4A] text-white"
-                            : "border-[#E6E5DE] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
-                        }`}
-                      >
-                        <SpeakerPlayIcon className="w-3.5 h-3.5" />
-                        <span>{isArabicUi ? "إعادة" : "Play"}</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <p
-                  dir={mainDir}
-                  className="text-[15px] font-semibold leading-snug text-[#242A26]"
+          <>
+            {hiddenCount > 0 && (
+              <div className="flex justify-center pb-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisibleLimit((n) => n + VISIBLE_WINDOW_STEP)
+                  }
+                  className="min-h-[44px] rounded-full border border-[#E2DFD6] bg-white px-4 text-xs font-semibold text-[#315F4A] nova-soft-shadow transition hover:bg-[#DCE8DD]/55"
                 >
-                  {mainText}
-                </p>
-                {subText && (
-                  <p dir={subDir} className="mt-1 text-xs text-[#777F79]">
-                    {subText}
-                  </p>
-                )}
+                  {isArabicUi
+                    ? `عرض الرسائل الأقدم (+${hiddenCount})`
+                    : `Show earlier messages (+${hiddenCount})`}
+                </button>
               </div>
-            );
-          })
+            )}
+            {renderedTurns.map((turn) => {
+              const isIncomingTranslation = turn.speaker !== perspective;
+              const otherPerspective = perspective === "A" ? "B" : "A";
+              const mainText = isIncomingTranslation
+                ? turn.translatedText || turn.sourceText
+                : turn.sourceText || turn.translatedText;
+              const subText = isIncomingTranslation
+                ? turn.translatedText
+                  ? turn.sourceText
+                  : ""
+                : turn.sourceText
+                  ? turn.translatedText
+                  : "";
+              const mainDir = ownerLang.rtl ? "rtl" : "ltr";
+              const subDir = otherLang.rtl ? "rtl" : "ltr";
+              const isReplaying = replayingTurnKey === `${perspective}-${turn.id}`;
+
+              return (
+                <div
+                  key={turn.id}
+                  className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 nova-soft-shadow ${
+                    !turn.isFinal ? "border border-dashed" : "border"
+                  } ${
+                    isIncomingTranslation
+                      ? accent === "forest"
+                        ? "self-start border-[#A8BDA9] bg-[#DCE8DD]/65"
+                        : "self-start border-[#C58B62]/45 bg-[#E8D8BF]/70"
+                      : "self-end border-[#E2DFD6] bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[#565E58]">
+                      {isIncomingTranslation
+                        ? isArabicUi
+                          ? `من الشخص ${otherPerspective} (${otherDisplay})`
+                          : `From Person ${otherPerspective} → ${ownerDisplay}`
+                        : isArabicUi
+                          ? `أنت (${ownerDisplay})`
+                          : `You spoke (${ownerDisplay})`}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      {!turn.isFinal && (
+                        <span className="rounded-full bg-[#DCE8DD] px-2 py-0.5 text-[10px] font-semibold text-[#214536] animate-pulse">
+                          {isArabicUi ? "يُترجم الآن..." : "translating..."}
+                        </span>
+                      )}
+                      {turn.isFinal && (
+                        <button
+                          type="button"
+                          onClick={() => onReplayTurn(turn, perspective)}
+                          aria-label={
+                            isArabicUi
+                              ? `إعادة تشغيل في ${earbudLabel}`
+                              : `Play again in ${earbudLabel}`
+                          }
+                          className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
+                            isReplaying
+                              ? "border-[#315F4A] bg-[#315F4A] text-white"
+                              : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
+                          }`}
+                        >
+                          <SpeakerPlayIcon className="w-3.5 h-3.5" />
+                          <span>{isArabicUi ? "إعادة" : "Play"}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <p
+                    dir={mainDir}
+                    className="text-[15px] font-semibold leading-snug text-[#242A26]"
+                  >
+                    {mainText}
+                  </p>
+                  {subText && (
+                    <p dir={subDir} className="mt-1 text-xs text-[#565E58]">
+                      {subText}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {showJumpToLatest && visibleTurns.length > 0 && (
+          <div className="sticky bottom-1 flex justify-center pointer-events-none">
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              className="pointer-events-auto min-h-[36px] rounded-full bg-[#214536] px-3.5 text-[11px] font-semibold text-white shadow-md transition hover:bg-[#315F4A]"
+            >
+              {isArabicUi ? "الأحدث ↓" : "Latest ↓"}
+            </button>
+          </div>
         )}
       </div>
     </section>
@@ -376,6 +527,7 @@ export default function SplitTranscript({
   inputLevel,
   outputLevels,
   speakerOverride,
+  sessionElapsedSec = 0,
   activeMicLabel,
   isBluetoothMicRisk,
   micDevices,
@@ -398,6 +550,7 @@ export default function SplitTranscript({
   onBeepTest,
   onClearTurns,
   onReplayTurn,
+  onChangeLanguagePair,
   onDismissError,
 }: SplitTranscriptProps) {
   const settings = useNovaSettings();
@@ -406,17 +559,34 @@ export default function SplitTranscript({
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [earbudTestOpen, setEarbudTestOpen] = useState(false);
+  const [languageModalOpen, setLanguageModalOpen] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Physical Left (-1.0) and Right (+1.0) earbud channel names are never RTL-reversed
-  const personAEarbud = swapChannels ? "Right (-1→+1 R)" : "Left (-1.0 L)";
-  const personBEarbud = swapChannels ? "Left (-1.0 L)" : "Right (+1.0 R)";
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  // Physical Left (-1.0) and Right (+1.0) channel assignment stays physically accurate
+  const personAEarTag: "L" | "R" = swapChannels ? "R" : "L";
+  const personBEarTag: "L" | "R" = swapChannels ? "L" : "R";
+  const leftText = isArabicUi ? "الأذن اليسرى" : "Left ear";
+  const rightText = isArabicUi ? "الأذن اليمنى" : "Right ear";
+  const personAEarbud = swapChannels ? rightText : leftText;
+  const personBEarbud = swapChannels ? leftText : rightText;
+
   const personAOutLevel = swapChannels
     ? outputLevels.right
     : outputLevels.left;
   const personBOutLevel = swapChannels
     ? outputLevels.left
     : outputLevels.right;
+
+  const isPlayingOutput =
+    outputLevels.left > 0.04 || outputLevels.right > 0.04;
+  const isTranslating = turns.some((t) => !t.isFinal);
 
   const codeA = langA.code.toUpperCase();
   const codeB = langB.code.toUpperCase();
@@ -436,7 +606,8 @@ export default function SplitTranscript({
     try {
       await navigator.clipboard.writeText(text);
       setCopiedToast(true);
-      setTimeout(() => setCopiedToast(false), 1800);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopiedToast(false), 1800);
     } catch {
       // Clipboard blocked
     }
@@ -445,13 +616,14 @@ export default function SplitTranscript({
   return (
     <div
       dir={isArabicUi ? "rtl" : "ltr"}
-      className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[#F5F3ED] text-[#242A26]"
+      className="mx-auto flex h-[100dvh] w-full max-w-2xl flex-col overflow-hidden bg-[#F5F3ED] text-[#242A26] sm:border-x sm:border-[#E2DFD6]"
     >
-      {/* Top Half: ONLY Person B's container is rotated 180deg */}
+      {/* Top Half: Rotated 180deg for Person B sitting across */}
       <TranscriptPane
         perspective="B"
         ownerLang={langB}
         otherLang={langA}
+        earTag={personBEarTag}
         earbudLabel={personBEarbud}
         accent="sand"
         outputLevel={personBOutLevel}
@@ -465,82 +637,70 @@ export default function SplitTranscript({
       />
 
       {/* Center Face-to-Face Control Bar (NEVER rotated) */}
-      <div className="z-20 border-y border-[#E6E5DE] bg-white px-3 py-2.5 shadow-[0_4px_20px_-6px_rgba(33,69,54,0.14)] space-y-2">
+      <div className="z-20 border-y border-[#E2DFD6] bg-white px-3 py-2 shadow-[0_4px_20px_-6px_rgba(33,69,54,0.14)] space-y-2">
+        {/* Top utility row */}
         <div className="flex flex-wrap items-center justify-between gap-1.5">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <Link
               href="/"
               aria-label={isArabicUi ? "العودة للرئيسية" : "Back to Home"}
-              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-3 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-3 text-xs font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]/60"
             >
               <ArrowLeftIcon
                 className={`w-3.5 h-3.5 ${isArabicUi ? "rotate-180" : ""}`}
               />
-              <span>{isArabicUi ? "الرئيسية" : "Home"}</span>
+              <span className="hidden min-[360px]:inline">
+                {isArabicUi ? "الرئيسية" : "Home"}
+              </span>
             </Link>
 
             <StatusBadge
               status={status}
               isMuted={isMuted}
               isSpeaking={isSpeaking}
+              isTranslating={isTranslating}
+              isPlayingOutput={isPlayingOutput}
               isArabicUi={isArabicUi}
             />
+
+            {(isRunning || sessionElapsedSec > 0) && (
+              <span
+                dir="ltr"
+                className="rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#214536] tabular-nums"
+              >
+                {formatElapsedTime(sessionElapsedSec)}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Bidirectional Auto Default + Manual Direction Overrides (keeps LTR code pair readable) */}
-            <div
-              dir="ltr"
-              className="inline-flex min-h-[44px] items-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] p-0.5"
-              role="group"
-              aria-label="Translation direction mode"
-            >
+            {onChangeLanguagePair && (
               <button
                 type="button"
-                onClick={() => onSetSpeakerOverride("auto")}
-                className={`min-h-[44px] min-w-[44px] rounded-full px-2.5 text-[11px] font-semibold transition ${
-                  speakerOverride === "auto"
-                    ? "bg-[#214536] text-white"
-                    : "text-[#777F79] hover:text-[#242A26]"
-                }`}
+                dir="ltr"
+                onClick={() => setLanguageModalOpen(true)}
+                aria-label={
+                  isArabicUi ? "تغيير اللغتين" : "Change languages"
+                }
+                className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 text-[11px] font-semibold text-[#315F4A] transition hover:bg-[#DCE8DD]"
               >
-                Auto
+                {codeA} ↔ {codeB}
               </button>
-              <button
-                type="button"
-                onClick={() => onSetSpeakerOverride("A")}
-                className={`min-h-[44px] min-w-[44px] rounded-full px-2 text-[10px] font-semibold transition ${
-                  speakerOverride === "A"
-                    ? "bg-[#315F4A] text-white"
-                    : "text-[#777F79] hover:text-[#242A26]"
-                }`}
-              >
-                {codeA}→{codeB}
-              </button>
-              <button
-                type="button"
-                onClick={() => onSetSpeakerOverride("B")}
-                className={`min-h-[44px] min-w-[44px] rounded-full px-2 text-[10px] font-semibold transition ${
-                  speakerOverride === "B"
-                    ? "bg-[#C58B62] text-white"
-                    : "text-[#777F79] hover:text-[#242A26]"
-                }`}
-              >
-                {codeB}→{codeA}
-              </button>
-            </div>
+            )}
 
-            {/* Physical Left <-> Right Channel Swap */}
+            {/* Swap Left / Right Earbud Channels */}
             <button
               type="button"
-              dir="ltr"
               onClick={onSwapChannels}
-              title="Swap Left and Right earbud channels"
-              aria-label="Swap Left and Right earbud channels"
-              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 text-[11px] font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]"
+              aria-label={
+                isArabicUi
+                  ? "تبديل السماعة اليسرى واليمنى"
+                  : "Swap left and right earbuds"
+              }
+              className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 text-[11px] font-semibold text-[#242A26] transition hover:bg-[#DCE8DD]"
             >
               <HorizontalSwapIcon className="w-3.5 h-3.5 text-[#315F4A]" />
-              <span>L/R</span>
+              <span>{isArabicUi ? "السماعتان" : "Swap ears"}</span>
             </button>
 
             {turns.length > 0 && (
@@ -548,8 +708,8 @@ export default function SplitTranscript({
                 <button
                   type="button"
                   onClick={() => void handleCopyTranscript()}
-                  aria-label={isArabicUi ? "نسخ النص" : "Copy transcript"}
-                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E6E5DE] bg-[#F5F3ED] px-2.5 text-[11px] font-semibold text-[#315F4A] transition hover:bg-[#DCE8DD]"
+                  aria-label={isArabicUi ? "نسخ المحادثة" : "Copy transcript"}
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#E2DFD6] bg-[#F5F3ED] px-2.5 text-[11px] font-semibold text-[#315F4A] transition hover:bg-[#DCE8DD]"
                 >
                   <CopyIcon className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">
@@ -559,8 +719,8 @@ export default function SplitTranscript({
                 <button
                   type="button"
                   onClick={onClearTurns}
-                  aria-label={isArabicUi ? "مسح المحادثة" : "Clear transcript"}
-                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] text-[#777F79] transition hover:bg-[#C76A67]/15 hover:text-[#C76A67]"
+                  aria-label={isArabicUi ? "مسح السجل" : "Clear transcript"}
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#565E58] transition hover:bg-[#C76A67]/15 hover:text-[#9B3B38]"
                 >
                   <TrashIcon className="w-4 h-4" />
                 </button>
@@ -570,11 +730,11 @@ export default function SplitTranscript({
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              aria-label={isArabicUi ? "الإعدادات" : "Open settings drawer"}
+              aria-label={isArabicUi ? "الإعدادات" : "Open settings"}
               className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
                 isBluetoothMicRisk
-                  ? "border-[#C28B47] bg-[#E8D8BF] text-[#242A26]"
-                  : "border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
+                  ? "border-[#A87131] bg-[#E8D8BF] text-[#242A26]"
+                  : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
               }`}
             >
               <SettingsGearIcon className="w-4 h-4" />
@@ -582,19 +742,73 @@ export default function SplitTranscript({
           </div>
         </div>
 
-        {/* Primary Session Controls + Auto-VAD / Push-to-Talk */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex min-h-[44px] items-center rounded-full border border-[#E6E5DE] bg-[#F5F3ED] p-0.5">
+        {/* Direction + Listening Style Row */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div
+            dir="ltr"
+            className="inline-flex min-h-[44px] items-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] p-0.5"
+            role="group"
+            aria-label={
+              isArabicUi ? "اتجاه الترجمة" : "Who is speaking direction"
+            }
+          >
+            <button
+              type="button"
+              onClick={() => onSetSpeakerOverride("auto")}
+              aria-label={
+                isArabicUi
+                  ? "تلقائي بالاتجاهين"
+                  : "Auto-detect either speaker"
+              }
+              className={`min-h-[44px] min-w-[44px] rounded-full px-2.5 text-[11px] font-semibold transition ${
+                speakerOverride === "auto"
+                  ? "bg-[#214536] text-white"
+                  : "text-[#565E58] hover:text-[#242A26]"
+              }`}
+            >
+              {isArabicUi ? "تلقائي" : "Auto"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetSpeakerOverride("A")}
+              aria-label={`Translate ${langA.label} to ${langB.label}`}
+              className={`min-h-[44px] min-w-[44px] rounded-full px-2 text-[11px] font-semibold transition ${
+                speakerOverride === "A"
+                  ? "bg-[#315F4A] text-white"
+                  : "text-[#565E58] hover:text-[#242A26]"
+              }`}
+            >
+              {codeA}→{codeB}
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetSpeakerOverride("B")}
+              aria-label={`Translate ${langB.label} to ${langA.label}`}
+              className={`min-h-[44px] min-w-[44px] rounded-full px-2 text-[11px] font-semibold transition ${
+                speakerOverride === "B"
+                  ? "bg-[#A86D43] text-white"
+                  : "text-[#565E58] hover:text-[#242A26]"
+              }`}
+            >
+              {codeB}→{codeA}
+            </button>
+          </div>
+
+          <div
+            className="inline-flex min-h-[44px] items-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] p-0.5"
+            role="group"
+            aria-label={isArabicUi ? "طريقة الاستماع" : "Listening style"}
+          >
             <button
               type="button"
               onClick={() => onSetCaptureMode("vad")}
               className={`min-h-[44px] min-w-[44px] rounded-full px-3 text-[11px] font-semibold transition ${
                 captureMode === "vad"
                   ? "bg-[#214536] text-white"
-                  : "text-[#777F79] hover:text-[#242A26]"
+                  : "text-[#565E58] hover:text-[#242A26]"
               }`}
             >
-              {isArabicUi ? "تلقائي" : "Auto-VAD"}
+              {isArabicUi ? "حر اليدين" : "Hands-free"}
             </button>
             <button
               type="button"
@@ -602,50 +816,53 @@ export default function SplitTranscript({
               className={`min-h-[44px] min-w-[44px] rounded-full px-3 text-[11px] font-semibold transition ${
                 captureMode === "ptt"
                   ? "bg-[#214536] text-white"
-                  : "text-[#777F79] hover:text-[#242A26]"
+                  : "text-[#565E58] hover:text-[#242A26]"
               }`}
             >
-              {isArabicUi ? "اضغط للتحدث" : "Push-to-Talk"}
+              {isArabicUi ? "اضغط للتحدث" : "Hold to talk"}
             </button>
           </div>
+        </div>
 
+        {/* Primary Action Row */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onStartStop}
-            className={`min-h-[44px] flex-1 min-w-[136px] rounded-full px-4 text-xs font-semibold transition active:scale-[0.98] ${
+            className={`min-h-[46px] flex-1 min-w-[140px] rounded-full px-4 text-xs sm:text-sm font-semibold transition active:scale-[0.98] ${
               isRunning
-                ? "border border-[#C76A67]/40 bg-[#C76A67]/12 text-[#C76A67] hover:bg-[#C76A67]/20"
+                ? "border border-[#B54F4C]/40 bg-[#C76A67]/12 text-[#9B3B38] hover:bg-[#C76A67]/20"
                 : "bg-[#315F4A] text-white shadow-[0_6px_16px_-4px_rgba(33,69,54,0.38)] hover:bg-[#214536]"
             }`}
           >
             {isRunning
               ? isArabicUi
-                ? "إنهاء الجلسة"
-                : "End Session"
+                ? "إنهاء المحادثة"
+                : "End Conversation"
               : isArabicUi
                 ? "ابدأ الترجمة الفورية"
-                : "Start Live Translation"}
+                : "Start Translation"}
           </button>
 
           {isRunning && captureMode === "vad" && (
             <button
               type="button"
               onClick={onToggleMute}
-              className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition active:scale-[0.98] ${
+              className={`inline-flex min-h-[46px] items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition active:scale-[0.98] ${
                 isMuted
-                  ? "bg-[#E8D8BF] text-[#242A26] border border-[#C28B47]/40"
-                  : "border border-[#E6E5DE] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
+                  ? "bg-[#E8D8BF] text-[#242A26] border border-[#A87131]/40"
+                  : "border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]"
               }`}
             >
               {isMuted ? (
-                <MicIcon className="w-3.5 h-3.5 text-[#315F4A]" />
+                <MicIcon className="w-4 h-4 text-[#315F4A]" />
               ) : (
-                <MicOffIcon className="w-3.5 h-3.5 text-[#777F79]" />
+                <MicOffIcon className="w-4 h-4 text-[#565E58]" />
               )}
               <span>
                 {isMuted
                   ? isArabicUi
-                    ? "تشغيل الميكروفون"
+                    ? "استئناف"
                     : "Resume Mic"
                   : isArabicUi
                     ? "كتم"
@@ -661,17 +878,17 @@ export default function SplitTranscript({
               onPointerUp={onPttUp}
               onPointerCancel={onPttUp}
               onPointerLeave={onPttUp}
-              className={`inline-flex min-h-[44px] flex-1 min-w-[140px] select-none items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition ${
+              className={`inline-flex min-h-[46px] flex-1 min-w-[140px] select-none items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition ${
                 pttActive
                   ? "bg-[#214536] text-white"
                   : "border border-[#315F4A]/40 bg-[#DCE8DD] text-[#214536]"
               }`}
             >
-              <MicIcon className="w-3.5 h-3.5" />
+              <MicIcon className="w-4 h-4" />
               <span>
                 {pttActive
                   ? isArabicUi
-                    ? "جارٍ الاستماع... اترك للإرسال"
+                    ? "يستمع... اترك للإرسال"
                     : "Listening... Release"
                   : isArabicUi
                     ? "اضغط مطولًا للتحدث"
@@ -691,10 +908,19 @@ export default function SplitTranscript({
         />
 
         {isBluetoothMicRisk && !errorMessage && (
-          <div className="rounded-xl border border-[#C28B47]/35 bg-[#E8D8BF]/45 px-3 py-1.5 text-[11px] font-medium truncate text-[#242A26]">
-            {isArabicUi
-              ? "ميكروفون البلوتوث نشط — افتح الإعدادات لاختيار ميكروفون الهاتف المدمج"
-              : "Bluetooth headset mic active — open Settings to switch to Built-in mic"}
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-[#A87131]/35 bg-[#E8D8BF]/50 px-3 py-1.5 text-[11px] font-medium text-[#242A26]">
+            <span className="truncate">
+              {isArabicUi
+                ? "ميكروفون البلوتوث نشط — يُنصح بميكروفون الهاتف لفصل الأذنين"
+                : "Bluetooth mic active — switch to Phone Mic in Settings to keep stereo ears separate"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="shrink-0 font-semibold text-[#214536] underline"
+            >
+              {isArabicUi ? "ضبط" : "Fix"}
+            </button>
           </div>
         )}
       </div>
@@ -704,6 +930,7 @@ export default function SplitTranscript({
         perspective="A"
         ownerLang={langA}
         otherLang={langB}
+        earTag={personAEarTag}
         earbudLabel={personAEarbud}
         accent="forest"
         outputLevel={personAOutLevel}
@@ -743,6 +970,17 @@ export default function SplitTranscript({
         langALabel={langA.label}
         langBLabel={langB.label}
       />
+
+      {onChangeLanguagePair && (
+        <MoreLanguagesModal
+          isOpen={languageModalOpen}
+          onClose={() => setLanguageModalOpen(false)}
+          langA={langA.code}
+          langB={langB.code}
+          onChangePair={onChangeLanguagePair}
+          uiLocale={settings.uiLocale}
+        />
+      )}
     </div>
   );
 }

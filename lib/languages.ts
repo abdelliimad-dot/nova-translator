@@ -43,19 +43,17 @@ export function buildInterpreterSystemPrompt(
   const isArabicInvolved =
     /arabic/i.test(langA) || /arabic/i.test(langB);
   const dialectGuidance = isArabicInvolved
-    ? ` For Arabic, understand both Modern Standard Arabic (Fusha) and spoken regional dialects—especially North African / Algerian Darija (e.g., Maghrebi vocabulary, French loanwords, and colloquial phrasing)—naturally and effortlessly.`
+    ? ` For Arabic, understand both Modern Standard Arabic (Fusha) and spoken regional dialects—especially North African / Algerian Darija (including negated forms like ماشي / ما...ش / والو, Maghrebi vocabulary, and French/English loanwords)—effortlessly; when translating into Arabic, speak in clear Modern Standard Arabic (Fusha) using standard Arabic vocabulary rather than regional dialect slang or transliterated foreign loanwords.`
     : "";
 
   return (
     `You are a professional simultaneous voice interpreter between ${langA} and ${langB}.${dialectGuidance} ` +
-    `Translate strictly by natural conversational meaning and intent, NEVER word-for-word or literally—render greetings, idioms, and everyday expressions into smooth, idiomatic speech that sounds completely natural in the target language. ` +
-    `VOCAL DELIVERY & PROSODY: Speak like a warm, attentive human conversation partner—use natural human cadence, relaxed phrasing, smooth micro-pauses, and expressive emotional intonation that mirrors the speaker's tone (warm, friendly, questioning, calm, or urgent), NEVER flat, robotic, or like a formal news anchor. ` +
-    `On EVERY utterance independently, detect which language is being spoken: ` +
-    `If you hear ${langA}, immediately output ONLY the spoken translation in ${langB}. ` +
-    `If you hear ${langB}, immediately output ONLY the spoken translation in ${langA}. ` +
-    `Never stick to the previous turn's direction—always translate into the OTHER language. ` +
-    `STRICT ANTI-HALLUCINATION RULE: If the audio input is background noise, breathing, silence, coughing, clicks, <noise>, or unintelligible speech, output NOTHING and remain completely silent. ` +
-    `Never guess, invent, or hallucinate words, never answer the speaker's questions, never add commentary, and never break character.`
+    `Translate strictly by natural conversational meaning and intent, NEVER word-for-word or literally—render greetings, idioms, and everyday expressions into smooth, idiomatic target speech. ` +
+    `STRICT FIDELITY: Preserve exact polarity and negations (never invert negative statements such as "ماشي أنا" / "ne...pas" / "don't" into affirmative), numbers, dates, times, names, forms of address, and final self-corrected choices without omitting key meaning. ` +
+    `VOCAL DELIVERY & PROSODY: Speak like a warm, attentive human conversation partner—use natural human cadence, relaxed phrasing, and expressive emotional intonation mirroring the speaker's tone, NEVER flat or robotic. ` +
+    `On EVERY utterance independently, detect which language is spoken: if ${langA}, output ONLY the spoken translation in ${langB}; if ${langB}, output ONLY the spoken translation in ${langA}. Never stick to the previous turn's direction. ` +
+    `STRICT ANTI-HALLUCINATION RULE: If input is background noise, breathing, silence, coughs, clicks, <noise>, or unintelligible speech, output NOTHING and stay completely silent. ` +
+    `Never guess or invent words, answer questions, add commentary, or break character.`
   );
 }
 
@@ -70,40 +68,55 @@ const SCRIPT_PATTERNS: Record<string, RegExp> = {
 };
 
 const STOPWORDS: Record<string, RegExp> = {
-  en: /\b(the|and|is|are|you|i|to|of|in|for|that|this|with|have|what|how|please|thank)\b/gi,
-  es: /\b(el|la|los|las|que|y|en|de|por|para|con|hola|gracias|como|esta|es)\b/gi,
-  fr: /\b(le|la|les|et|est|vous|je|de|pour|dans|que|bonjour|merci|avec|pas)\b/gi,
-  de: /\b(der|die|das|und|ist|ich|sie|ein|eine|mit|für|danke|hallo|wie|nicht)\b/gi,
-  it: /\b(il|la|le|che|e|di|per|con|ciao|grazie|come|sono|non|questo)\b/gi,
-  pt: /\b(o|a|os|as|que|e|de|para|com|obrigado|ola|como|nao|você)\b/gi,
-  tr: /\b(ve|bir|bu|için|ne|nasıl|teşekkür|merhaba|evet|hayır|ben|sen)\b/gi,
+  en: /\b(the|and|is|are|was|were|you|i|we|they|it|to|of|in|on|at|for|that|this|with|have|has|do|did|can|will|what|where|when|how|why|please|thank|yes|no|sorry|here|there|my|your)\b/gi,
+  es: /\b(el|la|los|las|un|una|que|y|en|de|por|para|con|hola|gracias|como|cómo|esta|está|es|son|yo|tú|nosotros|sí|no|pero|donde|dónde|cuando|mi|tu|muy|buenos)\b/gi,
+  fr: /\b(le|la|les|un|une|des|et|est|sont|vous|nous|tu|il|elle|je|j|c|l|d|de|du|pour|dans|sur|que|qui|bonjour|merci|avec|pas|ne|oui|non|mais|où|quand|comment|pourquoi|très|bien|mon|ton|ça)\b/gi,
+  de: /\b(der|die|das|den|dem|ein|eine|und|ist|sind|ich|du|wir|sie|es|mit|für|auf|in|nicht|ja|nein|danke|hallo|wie|wo|wann|warum|bitte|sehr|gut|mein|dein)\b/gi,
+  it: /\b(il|lo|la|i|gli|le|un|una|che|e|è|sono|di|a|da|in|per|con|ciao|grazie|come|dove|quando|io|tu|noi|sì|no|non|ma|molto|bene|questo|quello|mio)\b/gi,
+  pt: /\b(o|a|os|as|um|uma|que|e|é|são|de|em|por|para|com|obrigado|obrigada|olá|ola|como|onde|quando|não|nao|sim|mas|eu|você|muito|bem|meu|sua)\b/gi,
+  tr: /\b(ve|bir|bu|şu|o|için|ne|nerede|nasıl|ne zaman|teşekkür|teşekkürler|merhaba|evet|hayır|ben|sen|biz|var|yok|değil|çok|iyi|lütfen|ile|ama|mı|mi)\b/gi,
+};
+
+const DIACRITIC_BONUSES: Record<string, RegExp> = {
+  fr: /[éèêëàâçùûîïôœ]/g,
+  es: /[ñáíóú¿¡]/g,
+  de: /[äöüß]/g,
+  it: /[àèéìòù]/g,
+  pt: /[ãõçáéíóú]/g,
+  tr: /[ğşıçöüĞŞİÖÜ]/g,
+  ur: /[پچژگٹڈڑںھہئے]/g,
 };
 
 function scoreLanguageText(text: string, langCode: string): number {
   const scriptRe = SCRIPT_PATTERNS[langCode];
   if (scriptRe) {
     const matches = text.match(scriptRe);
-    return (matches?.length ?? 0) * 3;
+    const baseScore = (matches?.length ?? 0) * 3;
+    const distinctRe = DIACRITIC_BONUSES[langCode];
+    const bonus = distinctRe ? (text.match(distinctRe)?.length ?? 0) * 8 : 0;
+    return baseScore + bonus;
   }
 
-  // Latin-script language: combine Latin character count with stopword hits
+  // Latin-script language: combine Latin character count, stopword hits, and distinct diacritics
   const latinMatches = text.match(SCRIPT_PATTERNS.latin);
   const stopRe = STOPWORDS[langCode];
   const stopHits = stopRe ? text.match(stopRe)?.length ?? 0 : 0;
-  return (latinMatches?.length ?? 0) * 0.5 + stopHits * 5;
+  const distinctRe = DIACRITIC_BONUSES[langCode];
+  const diacriticHits = distinctRe ? text.match(distinctRe)?.length ?? 0 : 0;
+  return (latinMatches?.length ?? 0) * 0.4 + stopHits * 5 + diacriticHits * 4;
 }
 
 /**
  * Classifies a transcript snippet as belonging to Language A ("A"), Language B ("B"),
- * or undetermined (null). Uses Unicode script matching first for non-Latin languages
- * (e.g., Arabic <-> English) and stopword scoring for same-script pairs.
+ * or undetermined (null). Strips digits/punctuation first so times/numbers or brief
+ * code-switched loanwords (e.g. Darija+French) do not flip script attribution.
  */
 export function detectLanguageSide(
   text: string,
   langACode: string,
   langBCode: string
 ): "A" | "B" | null {
-  const trimmed = text.trim();
+  const trimmed = text.replace(/[0-9.,:%!?+\-_/()[\]{}'"@#]/g, " ").trim();
   if (trimmed.length < 1) return null;
 
   // Fast exact script separation when one is non-Latin and the other is Latin
@@ -117,6 +130,10 @@ export function detectLanguageSide(
     const latinCount = trimmed.match(SCRIPT_PATTERNS.latin)?.length ?? 0;
 
     if (nonLatinCount === 0 && latinCount === 0) return null;
+    // In mixed Arabic/Darija + French utterances, dominant non-Latin words govern speaker
+    if (nonLatinCount >= 2 && nonLatinCount * 2 >= latinCount) {
+      return aIsNonLatin ? "A" : "B";
+    }
     if (nonLatinCount > latinCount) {
       return aIsNonLatin ? "A" : "B";
     }

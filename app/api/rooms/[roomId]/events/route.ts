@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import {
+  AuthConfigurationError,
+  getRoomAuthFromRequest,
+} from "@/lib/security/authCrypto";
+import {
+  authorizeRoomAccess,
   isValidRoomId,
+  normalizeRoomId,
   subscribeToRoom,
-  type ParticipantRole,
   type RoomServerEvent,
 } from "@/lib/rooms/roomStore";
 
@@ -10,71 +15,105 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ roomId: string }> }
 ) {
-  const { roomId } = await context.params;
-  if (!isValidRoomId(roomId)) {
+  const { roomId: rawRoomId } = await context.params;
+  if (!isValidRoomId(rawRoomId)) {
     return NextResponse.json(
-      { error: "Invalid room code." },
-      { status: 404, headers: { "Cache-Control": "no-store" } }
+      { error: "Invalid room code format." },
+      { status: 400 }
     );
   }
 
-  const url = new URL(request.url);
-  const roleParam = url.searchParams.get("role");
-  const role: ParticipantRole = roleParam === "host" ? "host" : "guest";
+  const roomId = normalizeRoomId(rawRoomId);
+  let auth: ReturnType<typeof getRoomAuthFromRequest> = null;
+  try {
+    auth = getRoomAuthFromRequest(request, roomId);
+  } catch (err) {
+    if (err instanceof AuthConfigurationError) {
+      console.error(err.message);
+      return NextResponse.json(
+        { error: "Server security configuration error." },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    throw err;
+  }
+  if (!auth) {
+    return NextResponse.json(
+      { error: "Room authentication is required." },
+      { status: 401 }
+    );
+  }
+
+  const access = authorizeRoomAccess(roomId, auth);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   const encoder = new TextEncoder();
-  let unsubscribe: (() => void) | null = null;
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let cleanup: (() => void) | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      // Flush an initial padding comment (>8KB) immediately so Cloudflare Tunnel
-      // and mobile proxies push headers + initial SSE events without buffering.
-      controller.enqueue(encoder.encode(`: ${" ".repeat(8192)}\n\n`));
-
-      const sendEvent = (event: RoomServerEvent) => {
-        const payload = `data: ${JSON.stringify(event)}\n\n`;
-        controller.enqueue(encoder.encode(payload));
+      const safeEnqueue = (chunk: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          closed = true;
+        }
       };
 
-      unsubscribe = subscribeToRoom(roomId, role, sendEvent);
-      if (!unsubscribe) {
-        sendEvent({ type: "error", error: "Invalid room code." });
-        controller.close();
-        return;
-      }
-
-      heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(": ping\n\n"));
-        } catch {
-          if (heartbeat) clearInterval(heartbeat);
-        }
-      }, 15000);
-
-      request.signal.addEventListener("abort", () => {
-        if (heartbeat) clearInterval(heartbeat);
-        unsubscribe?.();
+      const closeStream = () => {
+        if (closed) return;
+        closed = true;
+        if (keepAlive) clearInterval(keepAlive);
         try {
           controller.close();
         } catch {
-          // Already closed
+          // Stream already closed
         }
+      };
+
+      // Initial padding to flush proxy/CDN SSE buffers cleanly
+      safeEnqueue(`: ${" ".repeat(8192)}\n\n`);
+
+      cleanup = subscribeToRoom(
+        access.room,
+        access.role,
+        auth.credId,
+        (event: RoomServerEvent) => {
+          safeEnqueue(`data: ${JSON.stringify(event)}\n\n`);
+        },
+        closeStream
+      );
+
+      keepAlive = setInterval(() => {
+        safeEnqueue(": ping\n\n");
+      }, 15000);
+
+      request.signal.addEventListener("abort", () => {
+        if (keepAlive) clearInterval(keepAlive);
+        cleanup?.();
+        cleanup = null;
+        closeStream();
       });
     },
     cancel() {
-      if (heartbeat) clearInterval(heartbeat);
-      unsubscribe?.();
+      closed = true;
+      if (keepAlive) clearInterval(keepAlive);
+      cleanup?.();
+      cleanup = null;
     },
   });
 
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
+      "Cache-Control": "no-cache, no-store, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
-      "Content-Encoding": "identity",
     },
   });
 }

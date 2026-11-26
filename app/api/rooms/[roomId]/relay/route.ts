@@ -1,107 +1,161 @@
 import { NextResponse } from "next/server";
 import {
+  AuthConfigurationError,
+  createRateLimiter,
+  getRoomAuthFromRequest,
+  readBoundedJsonBody,
+} from "@/lib/security/authCrypto";
+import {
+  authorizeRoomAccess,
+  isValidRoomId,
+  normalizeRoomId,
   relayAudioChunk,
   relayInterrupted,
   relaySignal,
   relayTranscript,
-  type ParticipantRole,
-  type RoomTranscriptItem,
-  type WebRtcSignalKind,
 } from "@/lib/rooms/roomStore";
 
-interface RelayPayload {
-  role?: ParticipantRole;
-  kind?:
-    | "transcript"
-    | "audio"
-    | "interrupted"
-    | "offer"
-    | "answer"
-    | "ice-candidate"
-    | "call-ready"
-    | "hangup"
-    | "webrtc-signal";
-  signalKind?: WebRtcSignalKind;
-  payload?: unknown;
-  item?: RoomTranscriptItem;
-  data?: string;
-  sampleRate?: number;
-  seq?: number;
-}
+const MAX_RELAY_BODY_BYTES = 131_072; // 128 KB max JSON payload
 
-const SIGNAL_KINDS = new Set<WebRtcSignalKind>([
-  "offer",
-  "answer",
-  "ice-candidate",
-  "call-ready",
-  "hangup",
-]);
+// Single-process sliding-window rate limiter per participant credential.
+const relayLimiterByCred = createRateLimiter({
+  maxRequests: 240,
+  windowMs: 60 * 1000,
+});
+
+function noStoreJson(body: unknown, status = 200, headers?: HeadersInit) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      ...headers,
+    },
+  });
+}
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ roomId: string }> }
 ) {
-  const { roomId } = await context.params;
-  let body: RelayPayload;
+  const { roomId: rawRoomId } = await context.params;
+  if (!isValidRoomId(rawRoomId)) {
+    return noStoreJson({ error: "Invalid room code format." }, 400);
+  }
+
+  const roomId = normalizeRoomId(rawRoomId);
+  let auth: ReturnType<typeof getRoomAuthFromRequest> = null;
   try {
-    body = (await request.json()) as RelayPayload;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
-
-  const role: ParticipantRole = body.role === "host" ? "host" : "guest";
-
-  if (body.kind === "transcript" && body.item) {
-    const ok = relayTranscript(roomId, { ...body.item, sender: role });
-    if (!ok) {
-      return NextResponse.json({ error: "Room not found." }, { status: 404 });
+    auth = getRoomAuthFromRequest(request, roomId);
+  } catch (err) {
+    if (err instanceof AuthConfigurationError) {
+      console.error(err.message);
+      return noStoreJson(
+        { error: "Server security configuration error." },
+        503
+      );
     }
-    return NextResponse.json({ ok: true });
+    throw err;
+  }
+  if (!auth) {
+    return noStoreJson({ error: "Room authentication is required." }, 401);
   }
 
-  if (body.kind === "audio" && typeof body.data === "string") {
-    const seq = relayAudioChunk(
-      roomId,
-      role,
-      body.data,
-      body.sampleRate ?? 24000
+  const access = authorizeRoomAccess(roomId, auth);
+  if (!access.ok) {
+    return noStoreJson({ error: access.error }, access.status);
+  }
+
+  const limit = relayLimiterByCred.check(`relay:${roomId}:${auth.credId}`);
+  if (!limit.allowed) {
+    return noStoreJson(
+      { error: "Too many relay events. Please slow down." },
+      429,
+      { "Retry-After": String(limit.retryAfterSeconds) }
     );
-    if (seq === null) {
-      return NextResponse.json({ error: "Room not found." }, { status: 404 });
+  }
+
+  const parsed = await readBoundedJsonBody<{
+    role?: unknown;
+    kind?: unknown;
+    item?: unknown;
+    sampleRate?: unknown;
+    data?: unknown;
+    turnId?: unknown;
+    signalKind?: unknown;
+    payload?: unknown;
+  }>(request, MAX_RELAY_BODY_BYTES);
+
+  if (!parsed.ok) {
+    return noStoreJson({ error: parsed.error }, parsed.status);
+  }
+
+  const body = parsed.data;
+
+  // Enforce verified server role — reject caller role spoofing attempts explicitly
+  if (body.role !== undefined && body.role !== access.role) {
+    return noStoreJson(
+      { error: "Cannot relay events under another participant role." },
+      403
+    );
+  }
+
+  const senderRole = access.role;
+
+  if (body.kind === "transcript") {
+    if (!body.item || typeof body.item !== "object" || Array.isArray(body.item)) {
+      return noStoreJson({ error: "Missing transcript item." }, 400);
     }
-    return NextResponse.json({ ok: true, seq });
+    const result = relayTranscript(
+      access.room,
+      senderRole,
+      body.item as Record<string, unknown>
+    );
+    if (!result.ok) {
+      return noStoreJson({ error: result.error }, result.status ?? 400);
+    }
+    return noStoreJson({ ok: true });
+  }
+
+  if (body.kind === "audio") {
+    const result = relayAudioChunk(
+      access.room,
+      senderRole,
+      body.sampleRate,
+      body.data,
+      body.turnId
+    );
+    if (!result.ok) {
+      return noStoreJson({ error: result.error }, 400);
+    }
+    return noStoreJson({ ok: true, seq: result.packet.seq });
   }
 
   if (body.kind === "interrupted") {
-    const ok = relayInterrupted(roomId, role);
-    if (!ok) {
-      return NextResponse.json({ error: "Room not found." }, { status: 404 });
-    }
-    return NextResponse.json({ ok: true });
+    relayInterrupted(access.room, senderRole);
+    return noStoreJson({ ok: true });
   }
 
-  const resolvedSignalKind =
-    body.kind === "webrtc-signal"
-      ? body.signalKind
-      : SIGNAL_KINDS.has(body.kind as WebRtcSignalKind)
-        ? (body.kind as WebRtcSignalKind)
-        : undefined;
-
-  if (resolvedSignalKind && SIGNAL_KINDS.has(resolvedSignalKind)) {
-    const seq = relaySignal(
-      roomId,
-      role,
-      resolvedSignalKind,
-      body.payload ?? null
+  if (
+    body.kind === "webrtc-signal" ||
+    body.kind === "offer" ||
+    body.kind === "answer" ||
+    body.kind === "ice-candidate" ||
+    body.kind === "call-ready" ||
+    body.kind === "hangup"
+  ) {
+    const signalKind =
+      body.kind === "webrtc-signal" ? body.signalKind : body.kind;
+    const result = relaySignal(
+      access.room,
+      senderRole,
+      signalKind,
+      body.payload
     );
-    if (seq === null) {
-      return NextResponse.json({ error: "Room not found." }, { status: 404 });
+    if (!result.ok) {
+      return noStoreJson({ error: result.error }, 400);
     }
-    return NextResponse.json({ ok: true, seq });
+    return noStoreJson({ ok: true, seq: result.packet.seq });
   }
 
-  return NextResponse.json(
-    { error: "Unsupported relay payload." },
-    { status: 400 }
-  );
+  return noStoreJson({ error: "Unknown relay kind." }, 400);
 }

@@ -6,7 +6,7 @@ import type { RoomTranscriptItem } from "@/lib/rooms/roomStore";
 
 const MODE_A_PREFIX = "nova_modea_turns_v1:";
 const MODE_B_PREFIX = "nova_room_turns_v1:";
-const MAX_STORED_TURNS = 40;
+const MAX_STORED_TURNS = 200;
 
 const storeListeners = new Set<() => void>();
 const memoryRawCache = new Map<string, string | null>();
@@ -74,7 +74,19 @@ function writeStoredList<T>(key: string, items: T[]): void {
     memoryRawCache.set(key, serialized);
     memoryParsedCache.set(key, trimmed);
   } catch {
-    // Ignore storage quota issues
+    // Progressive fallback if storage quota is tight without failing the session
+    for (const fallbackCap of [80, 40]) {
+      try {
+        const subset = trimmed.slice(-fallbackCap);
+        const serialized = JSON.stringify(subset);
+        window.localStorage.setItem(key, serialized);
+        memoryRawCache.set(key, serialized);
+        memoryParsedCache.set(key, subset);
+        break;
+      } catch {
+        // Try smaller subset
+      }
+    }
   }
   notifyStoreListeners();
 }

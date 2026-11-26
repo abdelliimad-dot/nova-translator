@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import SplitTranscript, {
   type ModeACaptureMode,
 } from "@/components/SplitTranscript";
@@ -42,6 +42,7 @@ import {
 } from "@/lib/transcriptStore";
 
 export default function ModeAClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const langA = findLanguage(searchParams.get("langA") ?? "ar");
   const langB = findLanguage(searchParams.get("langB") ?? "en");
@@ -54,6 +55,7 @@ export default function ModeAClient() {
   const [isRunning, setIsRunning] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [sessionElapsedSec, setSessionElapsedSec] = useState(0);
   const [pttActive, setPttActive] = useState(false);
   const [inputLevel, setInputLevel] = useState(0);
   const [outputLevels, setOutputLevels] = useState<ChannelLevels>({
@@ -64,6 +66,11 @@ export default function ModeAClient() {
   const [speakerOverride, setSpeakerOverride] = useState<SpeakerOverride>(
     settings.autoDetect ? "auto" : "A"
   );
+  const [prevAutoDetect, setPrevAutoDetect] = useState(settings.autoDetect);
+  if (prevAutoDetect !== settings.autoDetect) {
+    setPrevAutoDetect(settings.autoDetect);
+    setSpeakerOverride(settings.autoDetect ? "auto" : "A");
+  }
   const [ephemeralTurns, setEphemeralTurns] = useState<LiveTranscriptTurn[]>(
     []
   );
@@ -92,6 +99,8 @@ export default function ModeAClient() {
   const rafRef = useRef<number | null>(null);
   const captureModeRef = useRef<ModeACaptureMode>(settings.captureMode);
   const pttActiveRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const isRunningRef = useRef(false);
   const replayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const captureMode = settings.captureMode;
@@ -100,6 +109,52 @@ export default function ModeAClient() {
   useEffect(() => {
     captureModeRef.current = captureMode;
   }, [captureMode]);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const timer = setInterval(() => {
+      setSessionElapsedSec((sec) => sec + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isRunning]);
+
+  // Listen for audio hardware connect/disconnect events cleanly
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.addEventListener) {
+      return;
+    }
+    const handleDeviceChange = () => {
+      void listMicDevices()
+        .then((res) => setMicDevices(res.devices))
+        .catch(() => {});
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, []);
+
+  // Auto-resume suspended AudioContext on visibility return while live
+  useEffect(() => {
+    if (!isRunning) return;
+    return getStereoEngine().attachLifecycleRecovery((state) => {
+      setAudioCtxState(state);
+      if (state === "suspended") {
+        setAudioDebugNotice("Audio playback suspended by OS; tap screen or Start to resume.");
+      } else if (state === "running") {
+        setAudioDebugNotice(null);
+      }
+    });
+  }, [isRunning]);
+
+  // Keep active Gemini Live client synced when speakerOverride changes
+  useEffect(() => {
+    clientRef.current?.setSpeakerOverride(speakerOverride);
+  }, [speakerOverride]);
 
   const syncAudioDiagnostics = useCallback(() => {
     const diag = getStereoEngine().getDiagnostics();
@@ -143,25 +198,30 @@ export default function ModeAClient() {
     };
   }, [isRunning]);
 
-  const stopSession = useCallback(async () => {
-    if (vadRef.current) {
-      await vadRef.current.destroy();
-      vadRef.current = null;
-    }
-    if (clientRef.current) {
-      clientRef.current.disconnect();
-      clientRef.current = null;
-    }
-    getStereoEngine().stopAll();
-    setIsRunning(false);
-    setIsMuted(false);
-    setIsSpeaking(false);
-    setPttActive(false);
-    pttActiveRef.current = false;
-    setInputLevel(0);
-    setStatus("disconnected");
-    syncAudioDiagnostics();
-  }, [syncAudioDiagnostics]);
+  const stopSession = useCallback(
+    async (preserveErrorStatus = false) => {
+      if (vadRef.current) {
+        await vadRef.current.destroy();
+        vadRef.current = null;
+      }
+      if (clientRef.current) {
+        clientRef.current.disconnect();
+        clientRef.current = null;
+      }
+      getStereoEngine().stopAll();
+      setIsRunning(false);
+      setIsMuted(false);
+      setIsSpeaking(false);
+      setPttActive(false);
+      pttActiveRef.current = false;
+      setInputLevel(0);
+      if (!preserveErrorStatus) {
+        setStatus("disconnected");
+      }
+      syncAudioDiagnostics();
+    },
+    [syncAudioDiagnostics]
+  );
 
   useEffect(() => {
     return () => {
@@ -174,9 +234,12 @@ export default function ModeAClient() {
 
   const startSession = useCallback(
     async (unlockedCtx: AudioContext, explicitMicId?: string) => {
+      if (isStartingRef.current || isRunningRef.current) return;
+      isStartingRef.current = true;
       setErrorMessage(null);
       setAudioDebugNotice(null);
       setChunkCount(0);
+      setSessionElapsedSec(0);
       setLastPanChannel(null);
       setStatus("connecting");
 
@@ -198,8 +261,16 @@ export default function ModeAClient() {
           callbacks: {
             onStatusChange: (nextStatus) => {
               setStatus(nextStatus);
+              if (nextStatus === "error" && isRunningRef.current) {
+                void stopSession(true);
+              }
             },
             onTranscriptUpdate: (turn) => {
+              if (turn.isFinal && turn.hasAudio === false && turn.translatedText) {
+                setAudioDebugNotice(
+                  "Short turn completed with text transcription only (no audio returned by model)."
+                );
+              }
               if (settings.saveTranscripts) {
                 upsertPersistedModeATurn(langA.code, langB.code, turn);
               } else {
@@ -210,7 +281,7 @@ export default function ModeAClient() {
                     copy[idx] = turn;
                     return copy;
                   }
-                  return [...prev.slice(-30), turn];
+                  return [...prev, turn];
                 });
               }
             },
@@ -247,17 +318,13 @@ export default function ModeAClient() {
         });
 
         clientRef.current = client;
-        await client.connect();
 
-        const micInfo = await getMicManager().acquireMic(
-          explicitMicId ?? (selectedMicId || undefined)
-        );
-        setActiveMicLabel(micInfo.label);
-        setSelectedMicId(micInfo.deviceId);
-        setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
-        engine.unlockSync();
-        syncAudioDiagnostics();
-        void refreshMics();
+        const handleUnexpectedMicLoss = () => {
+          setErrorMessage(
+            "Microphone disconnected or preempted by another app. Check your audio device and tap Start to resume."
+          );
+          void stopSession(true);
+        };
 
         const vad = new VadManager({
           onMicAcquired: (info) => {
@@ -268,6 +335,7 @@ export default function ModeAClient() {
             syncAudioDiagnostics();
             void refreshMics();
           },
+          onTrackEnded: handleUnexpectedMicLoss,
           onInputLevel: (level) => {
             setInputLevel(level);
           },
@@ -288,7 +356,12 @@ export default function ModeAClient() {
             }
           },
           onAudioFrame: (pcm16) => {
-            if (captureModeRef.current === "vad" || pttActiveRef.current) {
+            if (captureModeRef.current === "vad") {
+              client.sendPcm16Frame(pcm16);
+            }
+          },
+          onRawFrame: (pcm16) => {
+            if (captureModeRef.current === "ptt" && pttActiveRef.current) {
               client.sendPcm16Frame(pcm16);
             }
           },
@@ -298,12 +371,29 @@ export default function ModeAClient() {
         });
 
         vadRef.current = vad;
-        await vad.start({
-          stream: micInfo.stream,
-          preferredDeviceId: micInfo.deviceId || undefined,
-          audioContext: unlockedCtx,
-          sensitivity: settings.vadSensitivity,
-        });
+
+        // Parallelize Gemini token+WS handshake with mic acquisition & Silero WASM warmup
+        await Promise.all([
+          client.connect(),
+          (async () => {
+            const micInfo = await getMicManager().acquireMic(
+              explicitMicId ?? (selectedMicId || undefined),
+              { onTrackEnded: handleUnexpectedMicLoss }
+            );
+            setActiveMicLabel(micInfo.label);
+            setSelectedMicId(micInfo.deviceId);
+            setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
+            engine.unlockSync();
+            syncAudioDiagnostics();
+            void refreshMics();
+            await vad.start({
+              stream: micInfo.stream,
+              preferredDeviceId: micInfo.deviceId || undefined,
+              audioContext: unlockedCtx,
+              sensitivity: settings.vadSensitivity,
+            });
+          })(),
+        ]);
 
         engine.unlockSync();
         syncAudioDiagnostics();
@@ -315,7 +405,9 @@ export default function ModeAClient() {
             ? err.message
             : "Failed to start live translation.";
         setErrorMessage(msg);
-        await stopSession();
+        await stopSession(true);
+      } finally {
+        isStartingRef.current = false;
       }
     },
     [
@@ -341,6 +433,7 @@ export default function ModeAClient() {
       void stopSession();
       return;
     }
+    if (isStartingRef.current) return;
     const ctx = getStereoEngine().unlockSync();
     syncAudioDiagnostics();
     void startSession(ctx);
@@ -363,6 +456,9 @@ export default function ModeAClient() {
       engine.unlockSync();
       syncAudioDiagnostics();
     } else {
+      if (isSpeaking) {
+        clientRef.current?.sendAudioStreamEnd();
+      }
       setIsMuted(true);
       setIsSpeaking(false);
       setInputLevel(0);
@@ -373,7 +469,29 @@ export default function ModeAClient() {
 
   const handleSetCaptureMode = (mode: ModeACaptureMode) => {
     triggerHaptic(settings.hapticsEnabled, 8);
+    if (captureMode !== mode && isSpeaking) {
+      pttActiveRef.current = false;
+      setPttActive(false);
+      setIsSpeaking(false);
+      clientRef.current?.sendAudioStreamEnd();
+    }
     updateNovaSettings({ captureMode: mode });
+  };
+
+  const handleChangeLanguagePair = async (nextA: string, nextB: string) => {
+    triggerHaptic(settings.hapticsEnabled, 10);
+    const resolvedA = findLanguage(nextA).code;
+    const resolvedB = findLanguage(nextB === resolvedA ? langA.code : nextB).code;
+    updateNovaSettings({
+      preferredLangA: resolvedA,
+      preferredLangB: resolvedB,
+    });
+    if (isRunning) {
+      await stopSession();
+    }
+    router.replace(
+      `/mode-a?langA=${encodeURIComponent(resolvedA)}&langB=${encodeURIComponent(resolvedB)}`
+    );
   };
 
   const handlePttDown = () => {
@@ -421,7 +539,14 @@ export default function ModeAClient() {
     setSelectedMicId(deviceId);
     if (vadRef.current && isRunning && !isMuted) {
       await vadRef.current.pause();
-      const micInfo = await getMicManager().acquireMic(deviceId || undefined);
+      const micInfo = await getMicManager().acquireMic(deviceId || undefined, {
+        onTrackEnded: () => {
+          setErrorMessage(
+            "Microphone disconnected or preempted. Tap Start to reconnect."
+          );
+          void stopSession();
+        },
+      });
       setActiveMicLabel(micInfo.label);
       setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
       vadRef.current.setPreferredDeviceId(micInfo.deviceId || undefined);
@@ -504,6 +629,7 @@ export default function ModeAClient() {
       inputLevel={inputLevel}
       outputLevels={outputLevels}
       speakerOverride={speakerOverride}
+      sessionElapsedSec={sessionElapsedSec}
       activeMicLabel={activeMicLabel}
       isBluetoothMicRisk={isBluetoothMicRisk}
       micDevices={micDevices}
@@ -526,6 +652,7 @@ export default function ModeAClient() {
       onBeepTest={handleBeepTest}
       onClearTurns={handleClearTurns}
       onReplayTurn={handleReplayTurn}
+      onChangeLanguagePair={(nextA, nextB) => void handleChangeLanguagePair(nextA, nextB)}
       onDismissError={() => setErrorMessage(null)}
     />
   );

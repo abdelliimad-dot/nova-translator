@@ -49,8 +49,22 @@ export class StereoEngine {
 
   private activeNodes = new Set<AudioScheduledSourceNode>();
   private pingPongTimer: ReturnType<typeof setInterval> | null = null;
-  private liveStreamPanner: StereoPannerNode | null = null;
-  private nextStreamTime = 0;
+  // Separate panners + scheduling cursors keep Left (-1.0) and Right (+1.0) isolated during overlaps.
+  private streamPanners: Record<AudioChannel, StereoPannerNode | null> = {
+    left: null,
+    right: null,
+    both: null,
+  };
+  private streamNextTime: Record<AudioChannel, number> = {
+    left: 0,
+    right: 0,
+    both: 0,
+  };
+  private activeNodesByChannel: Record<AudioChannel, Set<AudioScheduledSourceNode>> = {
+    left: new Set(),
+    right: new Set(),
+    both: new Set(),
+  };
 
   // Remote WebRTC voice ducking branch
   private remoteVoiceStream: MediaStream | null = null;
@@ -81,9 +95,9 @@ export class StereoEngine {
       this.masterGain.channelCountMode = "explicit";
       this.masterGain.connect(this.ctx.destination);
 
-      this.liveStreamPanner = this.ctx.createStereoPanner();
-      this.liveStreamPanner.pan.setValueAtTime(1.0, this.ctx.currentTime);
-      this.liveStreamPanner.connect(this.masterGain);
+      this.streamPanners.left = this.createPanner(this.ctx, "left");
+      this.streamPanners.right = this.createPanner(this.ctx, "right");
+      this.streamPanners.both = this.createPanner(this.ctx, "both");
 
       // Post-pan stereo metering branch
       this.splitter = this.ctx.createChannelSplitter(2);
@@ -141,6 +155,36 @@ export class StereoEngine {
 
   public getContext(): AudioContext | null {
     return this.ctx;
+  }
+
+  /**
+   * Subscribes to AudioContext state changes & document foreground returns so
+   * OS interruptions (calls, backgrounding, lock screen) auto-resume cleanly.
+   */
+  public attachLifecycleRecovery(
+    onStateChange?: (state: AudioContextState) => void
+  ): () => void {
+    const ctx = this.ctx;
+    if (!ctx || typeof document === "undefined") {
+      return () => {};
+    }
+
+    const handleState = () => {
+      onStateChange?.(ctx.state);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && ctx.state === "suspended") {
+        void ctx.resume().catch(() => {});
+      }
+    };
+
+    ctx.addEventListener("statechange", handleState);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      ctx.removeEventListener("statechange", handleState);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }
 
   public getDiagnostics(): StereoEngineDiagnostics {
@@ -357,15 +401,38 @@ export class StereoEngine {
   }
 
   /**
-   * Updates the live stream panner dynamically (e.g. if language detection resolves mid-turn).
+   * Resolves a pan value or channel name to one of the three isolated stereo branches.
+   */
+  private resolveStreamBranch(panOrChannel: number | AudioChannel): AudioChannel {
+    if (typeof panOrChannel === "string") return panOrChannel;
+    if (panOrChannel < -0.25) return "left";
+    if (panOrChannel > 0.25) return "right";
+    return "both";
+  }
+
+  private getOrCreateStreamPanner(
+    ctx: AudioContext,
+    channel: AudioChannel
+  ): StereoPannerNode {
+    const existing = this.streamPanners[channel];
+    if (existing) return existing;
+    const created = this.createPanner(ctx, channel);
+    this.streamPanners[channel] = created;
+    return created;
+  }
+
+  /**
+   * Adjusts active live stream branch pan dynamically without disturbing already
+   * scheduled audio on the opposite ear channel.
    */
   public setLiveStreamChannel(channelOrPan: AudioChannel | number): void {
-    if (!this.ctx || !this.liveStreamPanner) return;
-    const pan =
-      typeof channelOrPan === "number"
-        ? Math.max(-1, Math.min(1, channelOrPan))
-        : channelToPan(channelOrPan);
-    this.liveStreamPanner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.015);
+    if (!this.ctx) return;
+    const branch = this.resolveStreamBranch(channelOrPan);
+    const panner = this.streamPanners[branch];
+    if (panner && typeof channelOrPan === "number") {
+      const pan = Math.max(-1, Math.min(1, channelOrPan));
+      panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.015);
+    }
   }
 
   private static readonly VOICE_IDLE_GAIN = 0.85;
@@ -484,9 +551,14 @@ export class StereoEngine {
         this.isDucked = false;
         this.applyVoiceGainRamp(0.14);
       } else if (this.ctx) {
+        const furthestEnd = Math.max(
+          this.streamNextTime.left,
+          this.streamNextTime.right,
+          this.streamNextTime.both
+        );
         const nextRemaining = Math.max(
           0.25,
-          this.nextStreamTime - this.ctx.currentTime
+          furthestEnd - this.ctx.currentTime
         );
         this.triggerVoiceDucking(this.ctx.currentTime + nextRemaining);
       }
@@ -533,14 +605,18 @@ export class StereoEngine {
   ): void {
     const ctx = this.unlockSync();
 
+    let branch: AudioChannel;
     let pan: number;
     let sampleRate = sampleRateArg;
     if (typeof panOrOptions === "number") {
       pan = Math.max(-1, Math.min(1, panOrOptions));
+      branch = this.resolveStreamBranch(pan);
     } else if (typeof panOrOptions === "string") {
-      pan = channelToPan(panOrOptions);
+      branch = panOrOptions;
+      pan = channelToPan(branch);
     } else {
-      pan = channelToPan(panOrOptions.channel);
+      branch = panOrOptions.channel;
+      pan = channelToPan(branch);
       sampleRate = panOrOptions.sampleRate ?? sampleRateArg;
     }
 
@@ -554,12 +630,22 @@ export class StereoEngine {
     }
     if (int16.length === 0) return;
 
-    const overlapSec = 0.003;
-    const isTurnStartOrGap =
-      this.nextStreamTime <= ctx.currentTime + 0.004 ||
-      this.activeNodes.size === 0;
+    if (
+      typeof sampleRate !== "number" ||
+      !Number.isFinite(sampleRate) ||
+      sampleRate < 8000 ||
+      sampleRate > 96000
+    ) {
+      sampleRate = 24000;
+    }
 
-    // Mono AudioBuffer guarantees exact Left/Right isolation via StereoPannerNode
+    const overlapSec = 0.003;
+    const branchNextTime = this.streamNextTime[branch];
+    const branchActiveCount = this.activeNodesByChannel[branch].size;
+    const isTurnStartOrGap =
+      branchNextTime <= ctx.currentTime + 0.004 || branchActiveCount === 0;
+
+    // Mono AudioBuffer guarantees exact Left/Right isolation via channel-dedicated StereoPannerNode
     const audioBuffer = ctx.createBuffer(1, int16.length, sampleRate);
     this.decodePcmToFloat32(
       int16,
@@ -572,26 +658,22 @@ export class StereoEngine {
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
 
-    if (!this.liveStreamPanner) {
-      this.liveStreamPanner = ctx.createStereoPanner();
-      if (this.masterGain) {
-        this.liveStreamPanner.connect(this.masterGain);
-      } else {
-        this.liveStreamPanner.connect(ctx.destination);
-      }
-    }
-    this.liveStreamPanner.pan.setValueAtTime(pan, ctx.currentTime);
-    source.connect(this.liveStreamPanner);
+    const panner = this.getOrCreateStreamPanner(ctx, branch);
+    panner.pan.setValueAtTime(pan, ctx.currentTime);
+    source.connect(panner);
 
-    // 60ms initial jitter buffer on new bursts eliminates first-chunk stutters;
+    // 45ms initial jitter buffer on new bursts prevents first-chunk stutters with low latency;
     // 3ms linear overlap-add crossfades keep continuous chunks seamless and de-clicked.
     const startTime = isTurnStartOrGap
-      ? ctx.currentTime + 0.06
-      : Math.max(ctx.currentTime + 0.008, this.nextStreamTime - overlapSec);
-    this.nextStreamTime = startTime + audioBuffer.duration;
+      ? ctx.currentTime + 0.045
+      : Math.max(ctx.currentTime + 0.008, branchNextTime - overlapSec);
+    this.streamNextTime[branch] = startTime + audioBuffer.duration;
 
-    this.triggerVoiceDucking(this.nextStreamTime);
-    this.trackNode(source);
+    this.triggerVoiceDucking(this.streamNextTime[branch]);
+    this.activeNodesByChannel[branch].add(source);
+    this.trackNode(source, () => {
+      this.activeNodesByChannel[branch].delete(source);
+    });
     source.start(startTime);
   }
 
@@ -652,7 +734,10 @@ export class StereoEngine {
       }
     }
     this.activeNodes.clear();
-    this.nextStreamTime = 0;
+    this.activeNodesByChannel.left.clear();
+    this.activeNodesByChannel.right.clear();
+    this.activeNodesByChannel.both.clear();
+    this.streamNextTime = { left: 0, right: 0, both: 0 };
     if (this.duckRestoreTimer) {
       clearTimeout(this.duckRestoreTimer);
       this.duckRestoreTimer = null;
@@ -672,7 +757,7 @@ export class StereoEngine {
       }
       this.ctx = null;
       this.masterGain = null;
-      this.liveStreamPanner = null;
+      this.streamPanners = { left: null, right: null, both: null };
       this.splitter = null;
       this.leftAnalyser = null;
       this.rightAnalyser = null;
