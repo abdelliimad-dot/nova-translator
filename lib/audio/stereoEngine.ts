@@ -48,6 +48,8 @@ export class StereoEngine {
   private levelBufferR: Uint8Array<ArrayBuffer> | null = null;
 
   private activeNodes = new Set<AudioScheduledSourceNode>();
+  private playbackListeners = new Set<(playing: boolean) => void>();
+  private lastPlaybackActive = false;
   private pingPongTimer: ReturnType<typeof setInterval> | null = null;
   // Separate panners + scheduling cursors keep Left (-1.0) and Right (+1.0) isolated during overlaps.
   private streamPanners: Record<AudioChannel, StereoPannerNode | null> = {
@@ -712,14 +714,42 @@ export class StereoEngine {
     source.start(ctx.currentTime + 0.01);
   }
 
+  private notifyPlaybackState(playing: boolean): void {
+    if (this.lastPlaybackActive === playing) return;
+    this.lastPlaybackActive = playing;
+    for (const listener of this.playbackListeners) {
+      listener(playing);
+    }
+  }
+
+  public isPlaybackActive(): boolean {
+    if (this.activeNodes.size > 0) return true;
+    if (!this.ctx) return false;
+    const furthestEnd = Math.max(
+      this.streamNextTime.left,
+      this.streamNextTime.right,
+      this.streamNextTime.both
+    );
+    return furthestEnd > this.ctx.currentTime + 0.01;
+  }
+
+  public onPlaybackStateChange(listener: (playing: boolean) => void): () => void {
+    this.playbackListeners.add(listener);
+    return () => {
+      this.playbackListeners.delete(listener);
+    };
+  }
+
   private trackNode(
     node: AudioScheduledSourceNode,
     onEndedExtra?: () => void
   ): void {
     this.activeNodes.add(node);
+    this.notifyPlaybackState(true);
     node.onended = () => {
       this.activeNodes.delete(node);
       onEndedExtra?.();
+      this.notifyPlaybackState(this.activeNodes.size > 0);
     };
   }
 
@@ -744,6 +774,7 @@ export class StereoEngine {
     }
     this.isDucked = false;
     this.applyVoiceGainRamp(0.08);
+    this.notifyPlaybackState(false);
   }
 
   public async dispose(): Promise<void> {

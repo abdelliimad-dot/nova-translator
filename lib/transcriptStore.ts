@@ -6,6 +6,7 @@ import type { RoomTranscriptItem } from "@/lib/rooms/roomStore";
 
 const MODE_A_PREFIX = "nova_modea_turns_v1:";
 const MODE_B_PREFIX = "nova_room_turns_v1:";
+const MODE_C_PREFIX = "nova_modec_turns_v1:";
 const MAX_STORED_TURNS = 200;
 
 const storeListeners = new Set<() => void>();
@@ -24,7 +25,9 @@ function subscribeTranscriptStore(cb: () => void): () => void {
   const handleStorage = (e: StorageEvent) => {
     if (
       e.key &&
-      (e.key.startsWith(MODE_A_PREFIX) || e.key.startsWith(MODE_B_PREFIX))
+      (e.key.startsWith(MODE_A_PREFIX) ||
+        e.key.startsWith(MODE_B_PREFIX) ||
+        e.key.startsWith(MODE_C_PREFIX))
     ) {
       cb();
     }
@@ -95,15 +98,15 @@ export function getModeATurnsStorageKey(langA: string, langB: string): string {
   return `${MODE_A_PREFIX}${langA}_${langB}`;
 }
 
+export function getModeCTurnsStorageKey(langA: string, langB: string): string {
+  return `${MODE_C_PREFIX}${langA}_${langB}`;
+}
+
 export function getRoomTurnsStorageKey(roomId: string): string {
   return `${MODE_B_PREFIX}${roomId.toUpperCase()}`;
 }
 
-export function usePersistedModeATurns(
-  langA: string,
-  langB: string
-): LiveTranscriptTurn[] {
-  const key = getModeATurnsStorageKey(langA, langB);
+function usePersistedTurnsByKey(key: string): LiveTranscriptTurn[] {
   return useSyncExternalStore(
     subscribeTranscriptStore,
     () => readStoredList<LiveTranscriptTurn>(key),
@@ -111,12 +114,7 @@ export function usePersistedModeATurns(
   );
 }
 
-export function upsertPersistedModeATurn(
-  langA: string,
-  langB: string,
-  turn: LiveTranscriptTurn
-): void {
-  const key = getModeATurnsStorageKey(langA, langB);
+function upsertPersistedTurnByKey(key: string, turn: LiveTranscriptTurn): void {
   const current = readStoredList<LiveTranscriptTurn>(key);
   const idx = current.findIndex((t) => t.id === turn.id);
   const next =
@@ -126,8 +124,7 @@ export function upsertPersistedModeATurn(
   writeStoredList(key, next);
 }
 
-export function clearPersistedModeATurns(langA: string, langB: string): void {
-  const key = getModeATurnsStorageKey(langA, langB);
+function clearPersistedTurnsByKey(key: string): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(key);
@@ -137,6 +134,44 @@ export function clearPersistedModeATurns(langA: string, langB: string): void {
   memoryRawCache.set(key, null);
   memoryParsedCache.set(key, EMPTY_LIST);
   notifyStoreListeners();
+}
+
+export function usePersistedModeATurns(
+  langA: string,
+  langB: string
+): LiveTranscriptTurn[] {
+  return usePersistedTurnsByKey(getModeATurnsStorageKey(langA, langB));
+}
+
+export function upsertPersistedModeATurn(
+  langA: string,
+  langB: string,
+  turn: LiveTranscriptTurn
+): void {
+  upsertPersistedTurnByKey(getModeATurnsStorageKey(langA, langB), turn);
+}
+
+export function clearPersistedModeATurns(langA: string, langB: string): void {
+  clearPersistedTurnsByKey(getModeATurnsStorageKey(langA, langB));
+}
+
+export function usePersistedModeCTurns(
+  langA: string,
+  langB: string
+): LiveTranscriptTurn[] {
+  return usePersistedTurnsByKey(getModeCTurnsStorageKey(langA, langB));
+}
+
+export function upsertPersistedModeCTurn(
+  langA: string,
+  langB: string,
+  turn: LiveTranscriptTurn
+): void {
+  upsertPersistedTurnByKey(getModeCTurnsStorageKey(langA, langB), turn);
+}
+
+export function clearPersistedModeCTurns(langA: string, langB: string): void {
+  clearPersistedTurnsByKey(getModeCTurnsStorageKey(langA, langB));
 }
 
 export function usePersistedRoomMessages(roomId: string): RoomTranscriptItem[] {

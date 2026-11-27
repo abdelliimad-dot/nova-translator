@@ -39,6 +39,10 @@ export interface NovaDictionary {
   modeBTitle: string;
   modeBSubtitle: string;
   modeBCta: string;
+  modeCBadge: string;
+  modeCTitle: string;
+  modeCSubtitle: string;
+  modeCCta: string;
   trustSecure: string;
   trustInstant: string;
   trustMulti: string;
@@ -119,6 +123,10 @@ const EN_DICT: NovaDictionary = {
   modeBTitle: "Connect Two Phones",
   modeBSubtitle: "Each person listens on their own phone",
   modeBCta: "Create or Join",
+  modeCBadge: "Mode C",
+  modeCTitle: "Phone Speaker",
+  modeCSubtitle: "No earbuds · One phone",
+  modeCCta: "Start Speaker Mode",
   trustSecure: "Private audio",
   trustInstant: "Real-time voice",
   trustMulti: "13 languages",
@@ -202,6 +210,10 @@ const AR_DICT: NovaDictionary = {
   modeBTitle: "ربط هاتفين",
   modeBSubtitle: "كل شخص يتحدث ويستمع على هاتفه",
   modeBCta: "إنشاء أو دخول",
+  modeCBadge: "Mode C",
+  modeCTitle: "مكبر الصوت",
+  modeCSubtitle: "بدون سماعات · هاتف واحد",
+  modeCCta: "ابدأ عبر مكبر الصوت",
   trustSecure: "خصوصية كاملة",
   trustInstant: "صوت فوري",
   trustMulti: "13 لغة",

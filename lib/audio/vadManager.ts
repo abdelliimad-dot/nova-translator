@@ -21,6 +21,7 @@ export interface VadStartOptions {
   audioContext?: AudioContext | null;
   sensitivity?: "low" | "balanced" | "high";
   voiceCallAec?: boolean;
+  speakerAec?: boolean;
 }
 
 function float32ToInt16(frame: Float32Array): Int16Array {
@@ -60,6 +61,7 @@ export class VadManager {
   private isSpeaking = false;
   private preSpeechRing: Int16Array[] = [];
   private active = false;
+  private gated = false;
   private startEpoch = 0;
 
   constructor(callbacks: VadCallbacks = {}) {
@@ -74,13 +76,28 @@ export class VadManager {
     return this.active;
   }
 
+  public isGated(): boolean {
+    return this.gated;
+  }
+
+  /**
+   * Software half-duplex gate: immediately stops forwarding speech frames and suppresses
+   * VAD triggers without tearing down or reopening the underlying mic MediaStreamTrack.
+   */
+  public setGated(gated: boolean): void {
+    if (this.gated === gated) return;
+    this.gated = gated;
+    this.isSpeaking = false;
+    this.preSpeechRing = [];
+  }
+
   public async start(opts: VadStartOptions = {}): Promise<void> {
     const epoch = ++this.startEpoch;
     if (opts.preferredDeviceId !== undefined) {
       this.preferredDeviceId = opts.preferredDeviceId;
     }
-    if (opts.voiceCallAec !== undefined) {
-      this.voiceCallAec = opts.voiceCallAec;
+    if (opts.voiceCallAec !== undefined || opts.speakerAec !== undefined) {
+      this.voiceCallAec = Boolean(opts.voiceCallAec || opts.speakerAec);
     }
     if (opts.stream) {
       this.preAcquiredStream = opts.stream;
@@ -162,6 +179,11 @@ export class VadManager {
           micManager.releaseMic();
         },
         onFrameProcessed: (probs, frame) => {
+          if (this.gated) {
+            this.callbacks.onInputLevel?.(0, 0);
+            this.preSpeechRing = [];
+            return;
+          }
           const level = computeFrameLevel(frame);
           this.callbacks.onInputLevel?.(level, probs.isSpeech);
 
@@ -178,6 +200,7 @@ export class VadManager {
           }
         },
         onSpeechRealStart: () => {
+          if (this.gated) return;
           // Wait until minSpeechMs (320ms / ~10 frames) confirms real speech before streaming
           this.isSpeaking = true;
           this.callbacks.onSpeechStart?.();
@@ -190,6 +213,11 @@ export class VadManager {
           }
         },
         onSpeechEnd: () => {
+          if (this.gated) {
+            this.isSpeaking = false;
+            this.preSpeechRing = [];
+            return;
+          }
           const wasSpeaking = this.isSpeaking;
           this.isSpeaking = false;
           this.preSpeechRing = [];
@@ -200,7 +228,9 @@ export class VadManager {
         onVADMisfire: () => {
           this.isSpeaking = false;
           this.preSpeechRing = [];
-          this.callbacks.onVADMisfire?.();
+          if (!this.gated) {
+            this.callbacks.onVADMisfire?.();
+          }
         },
       });
 

@@ -17,11 +17,13 @@ import {
   MoreGridIcon,
   SettingsGearIcon,
   ShieldCheckIcon,
+  SpeakerPlayIcon,
   TwoPhonesBadgeIcon,
 } from "@/components/nova/NovaIcons";
 import {
   EarbudsIllustration,
   HeroGlobeIllustration,
+  PhoneSpeakerIllustration,
   TwoPhonesIllustration,
 } from "@/components/nova/NovaIllustrations";
 import NovaLogo from "@/components/nova/NovaLogo";
@@ -480,6 +482,48 @@ export default function HomeClient() {
                   >
                     <span>{dict.modeBCta}</span>
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#242A26]/20 bg-white/80 text-[#242A26]">
+                      <ArrowRightIcon
+                        className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                      />
+                    </span>
+                  </Link>
+                </div>
+              </div>
+            </div>
+
+            {/* Mode C — Phone Speaker (No earbuds · One phone) */}
+            <div className="relative md:col-span-2 flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3 min-[360px]:p-4 nova-card-shadow">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#315F4A]/14 via-[#E8D8BF]/45 to-transparent"
+              />
+              <div className="relative grid grid-cols-[auto_1fr] items-center gap-2 min-[360px]:gap-3.5">
+                <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
+                  <PhoneSpeakerIllustration />
+                </div>
+
+                <div className="min-w-0 space-y-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#214536] px-2.5 py-1 text-[11px] font-semibold text-white">
+                    <SpeakerPlayIcon className="w-3.5 h-3.5" />
+                    <span>{dict.modeCBadge}</span>
+                  </span>
+
+                  <div>
+                    <h2 className="text-[17px] min-[360px]:text-[19px] font-bold leading-tight text-[#242A26]">
+                      {dict.modeCTitle}
+                    </h2>
+                    <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
+                      {dict.modeCSubtitle}
+                    </p>
+                  </div>
+
+                  <Link
+                    href={`/mode-c?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
+                    onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
+                    className="inline-flex min-h-[44px] w-full md:max-w-xs items-center justify-between gap-1.5 rounded-full border border-[#315F4A]/25 bg-[#DCE8DD]/75 ps-3 min-[360px]:ps-3.5 pe-1.5 py-1.5 text-[11.5px] min-[360px]:text-[13px] font-semibold leading-tight text-[#214536] nova-soft-shadow transition hover:bg-[#DCE8DD] active:scale-[0.98]"
+                  >
+                    <span>{dict.modeCCta}</span>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#315F4A] text-white">
                       <ArrowRightIcon
                         className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
                       />

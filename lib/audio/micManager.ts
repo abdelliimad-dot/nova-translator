@@ -108,6 +108,8 @@ export async function listMicDevices(): Promise<MicListResult> {
 export interface AcquireMicOptions {
   /** Enable browser AEC/NS/AGC (true for Mode B speakerphone calls; keep false for Mode A BT A2DP lock). */
   voiceCallAec?: boolean;
+  /** Enable browser AEC/NS/AGC for single-phone speaker mode (Mode C). */
+  speakerAec?: boolean;
   /** Invoked once if the active hardware microphone track ends unexpectedly mid-session. */
   onTrackEnded?: () => void;
 }
@@ -118,8 +120,8 @@ function buildAudioConstraints(
 ): MediaStreamConstraints {
   // Keep AEC/NS/AGC disabled in Mode A so Android Chrome stays in MODE_NORMAL + Bluetooth A2DP Stereo
   // instead of switching to VoIP MODE_IN_COMMUNICATION (HFP Mono).
-  // Mode B passes voiceCallAec: true so two-phone speaker calls suppress acoustic echo feedback.
-  const enableAec = Boolean(options?.voiceCallAec);
+  // Mode B (voiceCallAec) and Mode C (speakerAec) enable hardware AEC/NS/AGC to prevent speaker feedback.
+  const enableAec = Boolean(options?.voiceCallAec || options?.speakerAec);
   const audio: MediaTrackConstraints = {
     echoCancellation: enableAec,
     noiseSuppression: enableAec,

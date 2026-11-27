@@ -252,3 +252,78 @@ export function TwoPhonesIllustration() {
     </div>
   );
 }
+
+export function PhoneSpeakerIllustration() {
+  return (
+    <div
+      className="relative flex h-28 w-28 sm:h-32 sm:w-32 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#DCE8DD]/75 via-[#F5F3ED] to-[#E8D8BF]/70 p-2 overflow-hidden"
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 120 120" fill="none" className="h-full w-full">
+        {/* Soft reflection */}
+        <ellipse
+          cx="60"
+          cy="104"
+          rx="28"
+          ry="5"
+          fill="#A8BDA9"
+          fillOpacity="0.35"
+        />
+
+        {/* Symmetrical warm acoustic soundwaves from phone speaker */}
+        <path
+          d="M27 42a28 28 0 0 0 0 36"
+          stroke="#315F4A"
+          strokeWidth="2.1"
+          strokeLinecap="round"
+          strokeOpacity="0.65"
+        />
+        <path
+          d="M18 34a40 40 0 0 0 0 52"
+          stroke="#A8BDA9"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeOpacity="0.7"
+        />
+        <path
+          d="M93 42a28 28 0 0 1 0 36"
+          stroke="#315F4A"
+          strokeWidth="2.1"
+          strokeLinecap="round"
+          strokeOpacity="0.65"
+        />
+        <path
+          d="M102 34a40 40 0 0 1 0 52"
+          stroke="#C58B62"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeOpacity="0.65"
+        />
+
+        {/* Upright single smartphone */}
+        <rect
+          x="39"
+          y="22"
+          width="42"
+          height="74"
+          rx="10"
+          fill="#242A26"
+          stroke="#315F4A"
+          strokeWidth="1.6"
+        />
+        <rect x="42.5" y="26.5" width="35" height="65" rx="6.5" fill="#214536" />
+
+        {/* Speaker emitter & waveform bars inside phone */}
+        <circle cx="60" cy="59" r="11" fill="#315F4A" stroke="#DCE8DD" strokeWidth="1.4" />
+        <path
+          d="M54 59v0M57 55v8M60 52v14M63 55v8M66 59v0"
+          stroke="#E8D8BF"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <rect x="53" y="31" width="14" height="2.4" rx="1.2" fill="#A8BDA9" fillOpacity="0.65" />
+        <rect x="52" y="84.5" width="16" height="2.5" rx="1.25" fill="#DCE8DD" fillOpacity="0.6" />
+      </svg>
+    </div>
+  );
+}

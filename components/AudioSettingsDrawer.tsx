@@ -39,6 +39,7 @@ interface AudioSettingsDrawerProps {
   wakeLockActive?: boolean;
   onBeepTest?: () => void;
   onOpenEarbudTest?: () => void;
+  hideEarbudControls?: boolean;
   showDiagnostics?: boolean;
   transcriptCount?: number;
   onExportTranscript?: () => Promise<boolean | void> | boolean | void;
@@ -61,6 +62,7 @@ export default function AudioSettingsDrawer({
   wakeLockActive = false,
   onBeepTest,
   onOpenEarbudTest,
+  hideEarbudControls = false,
   showDiagnostics = true,
   transcriptCount = 0,
   onExportTranscript,
@@ -164,7 +166,7 @@ export default function AudioSettingsDrawer({
               {dict.settingsGroups.audio}
             </h3>
 
-            {onOpenEarbudTest && (
+            {!hideEarbudControls && onOpenEarbudTest && (
               <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E6E5DE] bg-[#F5F3ED] p-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#DCE8DD] text-[#214536]">
@@ -242,7 +244,7 @@ export default function AudioSettingsDrawer({
               </div>
             )}
 
-            {onBeepTest && (
+            {!hideEarbudControls && onBeepTest && (
               <div className="rounded-xl border border-[#E2DFD6] bg-[#F5F3ED] p-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-semibold text-[#242A26]">
@@ -265,9 +267,13 @@ export default function AudioSettingsDrawer({
             )}
 
             <p className="text-[11px] leading-snug text-[#565E58]">
-              {isRtl
-                ? "ملاحظة: يمر صوت الترجمة عبر السماعة المتصلة بهاتفك أو مكبر الصوت حسب إعدادات النظام."
-                : "Audio output plays through your phone speaker or connected Bluetooth earbuds via system audio routing."}
+              {hideEarbudControls
+                ? isRtl
+                  ? "ملاحظة: يخرج صوت الترجمة مباشرة عبر مكبر صوت الهاتف مع عزل تلقائي للصدى."
+                  : "Audio plays directly from your phone speaker with half-duplex anti-echo protection."
+                : isRtl
+                  ? "ملاحظة: يمر صوت الترجمة عبر السماعة المتصلة بهاتفك أو مكبر الصوت حسب إعدادات النظام."
+                  : "Audio output plays through your phone speaker or connected Bluetooth earbuds via system audio routing."}
             </p>
 
             {showDiagnostics && (
@@ -291,23 +297,30 @@ export default function AudioSettingsDrawer({
                       {audioCtxState === "running" ? "Active" : audioCtxState}
                     </strong>
                   </div>
-                  <div className="flex items-center justify-between text-[#565E58]">
-                    <span>Earbud channels</span>
-                    <strong
-                      className={
-                        audioChannelCount >= 2 ? "text-[#315F4A]" : "text-[#A87131]"
-                      }
-                    >
-                      {audioChannelCount >= 2 ? "Stereo (2ch)" : `${audioChannelCount}ch`}
-                    </strong>
-                  </div>
+                  {!hideEarbudControls ? (
+                    <div className="flex items-center justify-between text-[#565E58]">
+                      <span>Earbud channels</span>
+                      <strong
+                        className={
+                          audioChannelCount >= 2 ? "text-[#315F4A]" : "text-[#A87131]"
+                        }
+                      >
+                        {audioChannelCount >= 2 ? "Stereo (2ch)" : `${audioChannelCount}ch`}
+                      </strong>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between text-[#565E58]">
+                      <span>Speaker output</span>
+                      <strong className="text-[#315F4A]">Center Mono (pan 0.0)</strong>
+                    </div>
+                  )}
                   {typeof chunkCount === "number" && (
                     <div className="flex items-center justify-between text-[#565E58]">
                       <span>Translated clips</span>
                       <strong className="text-[#242A26]">{chunkCount}</strong>
                     </div>
                   )}
-                  {lastPanChannel !== undefined && (
+                  {!hideEarbudControls && lastPanChannel !== undefined && (
                     <div className="flex items-center justify-between text-[#565E58]">
                       <span>Last ear routed</span>
                       <strong className="text-[#315F4A]">
