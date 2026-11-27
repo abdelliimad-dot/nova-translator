@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import AudioSettingsDrawer from "@/components/AudioSettingsDrawer";
 import AudioVisualizer from "@/components/AudioVisualizer";
+import ConversationSummaryModal from "@/components/nova/ConversationSummaryModal";
 import EarbudTestModal from "@/components/EarbudTestModal";
 import LanguageFlag from "@/components/nova/LanguageFlag";
 import MoreLanguagesModal from "@/components/nova/MoreLanguagesModal";
@@ -15,9 +16,16 @@ import {
   MicIcon,
   MicOffIcon,
   SettingsGearIcon,
+  SparklesIcon,
   SpeakerPlayIcon,
+  StarIcon,
   TrashIcon,
 } from "@/components/nova/NovaIcons";
+import {
+  buildSavedPhraseKey,
+  toggleSavedPhrase,
+  useSavedPhrases,
+} from "@/lib/favoritesStore";
 import { useIsOnline } from "@/lib/hooks/useNetworkStatus";
 import type {
   LiveConnectionStatus,
@@ -252,6 +260,10 @@ function TranscriptPane({
   const isNearBottomRef = useRef(true);
   const [visibleLimit, setVisibleLimit] = useState(VISIBLE_WINDOW_STEP);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const savedPhrases = useSavedPhrases();
+  const savedKeys = new Set(
+    savedPhrases.map((s) => buildSavedPhraseKey(s.sourceText, s.translatedText))
+  );
 
   const visibleTurns = turns.filter(
     (t) => t.sourceText.trim().length > 0 || t.translatedText.trim().length > 0
@@ -458,23 +470,68 @@ function TranscriptPane({
                         </span>
                       )}
                       {turn.isFinal && (
-                        <button
-                          type="button"
-                          onClick={() => onReplayTurn(turn, perspective)}
-                          aria-label={
-                            isArabicUi
-                              ? `إعادة تشغيل في ${earbudLabel}`
-                              : `Play again in ${earbudLabel}`
-                          }
-                          className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
-                            isReplaying
-                              ? "border-[#315F4A] bg-[#315F4A] text-white"
-                              : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
-                          }`}
-                        >
-                          <SpeakerPlayIcon className="w-3.5 h-3.5" />
-                          <span>{isArabicUi ? "إعادة" : "Play"}</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const codeA =
+                                perspective === "A"
+                                  ? ownerLang.code
+                                  : otherLang.code;
+                              const codeB =
+                                perspective === "A"
+                                  ? otherLang.code
+                                  : ownerLang.code;
+                              toggleSavedPhrase({
+                                sourceText: turn.sourceText,
+                                translatedText: turn.translatedText,
+                                sourceLang:
+                                  turn.speaker === "A" ? codeA : codeB,
+                                targetLang:
+                                  turn.speaker === "A" ? codeB : codeA,
+                                modeLabel: isArabicUi ? "السماعتان" : "Mode A",
+                              });
+                            }}
+                            aria-label={isArabicUi ? "حفظ العبارة" : "Save phrase"}
+                            className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition active:scale-95 ${
+                              savedKeys.has(
+                                buildSavedPhraseKey(
+                                  turn.sourceText,
+                                  turn.translatedText
+                                )
+                              )
+                                ? "border-[#C58B62] bg-[#E8D8BF] text-[#A86D43]"
+                                : "border-[#E2DFD6] bg-[#F5F3ED] text-[#565E58] hover:text-[#A86D43]"
+                            }`}
+                          >
+                            <StarIcon
+                              className="w-3.5 h-3.5"
+                              filled={savedKeys.has(
+                                buildSavedPhraseKey(
+                                  turn.sourceText,
+                                  turn.translatedText
+                                )
+                              )}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onReplayTurn(turn, perspective)}
+                            aria-label={
+                              isArabicUi
+                                ? `إعادة تشغيل في ${earbudLabel}`
+                                : `Play again in ${earbudLabel}`
+                            }
+                            className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
+                              isReplaying
+                                ? "border-[#315F4A] bg-[#315F4A] text-white"
+                                : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
+                            }`}
+                          >
+                            <SpeakerPlayIcon className="w-3.5 h-3.5" />
+                            <span>{isArabicUi ? "إعادة" : "Play"}</span>
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -560,6 +617,7 @@ export default function SplitTranscript({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [earbudTestOpen, setEarbudTestOpen] = useState(false);
   const [languageModalOpen, setLanguageModalOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -705,6 +763,17 @@ export default function SplitTranscript({
 
             {turns.length > 0 && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setSummaryOpen(true)}
+                  aria-label={isArabicUi ? "تلخيص المحادثة" : "Summarize conversation"}
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border border-[#A8BDA9] bg-[#DCE8DD]/70 px-2.5 text-[11px] font-semibold text-[#214536] transition hover:bg-[#DCE8DD]"
+                >
+                  <SparklesIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">
+                    {isArabicUi ? "ملخص" : "Summarize"}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleCopyTranscript()}
@@ -981,6 +1050,22 @@ export default function SplitTranscript({
           uiLocale={settings.uiLocale}
         />
       )}
+
+      <ConversationSummaryModal
+        isOpen={summaryOpen}
+        onClose={() => setSummaryOpen(false)}
+        turns={turns.map((t) => ({
+          speakerLabel:
+            t.speaker === "A"
+              ? `Person A (${langA.label} → ${langB.label})`
+              : `Person B (${langB.label} → ${langA.label})`,
+          sourceText: t.sourceText,
+          translatedText: t.translatedText,
+        }))}
+        langALabel={langA.label}
+        langBLabel={langB.label}
+        isArabicUi={isArabicUi}
+      />
     </div>
   );
 }

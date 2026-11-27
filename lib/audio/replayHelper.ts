@@ -10,6 +10,7 @@ const turnAudioMap = new Map<string, BufferedAudioTurn>();
 
 const SPEECH_BCP47: Record<string, string> = {
   ar: "ar-SA",
+  "ar-dz": "ar-DZ",
   en: "en-US",
   fr: "fr-FR",
   tr: "tr-TR",

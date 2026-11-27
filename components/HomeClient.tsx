@@ -6,34 +6,42 @@ import AudioSettingsDrawer from "@/components/AudioSettingsDrawer";
 import EarbudTestModal from "@/components/EarbudTestModal";
 import LanguageFlag from "@/components/nova/LanguageFlag";
 import MoreLanguagesModal from "@/components/nova/MoreLanguagesModal";
+import QuickPhrasesView from "@/components/QuickPhrasesView";
+import SavedPhrasesModal from "@/components/SavedPhrasesModal";
 import {
   ArrowRightIcon,
   BoltIcon,
+  BookOpenIcon,
+  CameraIcon,
   ChevronDownIcon,
   GlobeLinesIcon,
   HeadphonesIcon,
+  HeadphonesListenIcon,
   HeartOutlineIcon,
   HorizontalSwapIcon,
   MoreGridIcon,
+  OfflineCheckIcon,
   SettingsGearIcon,
   ShieldCheckIcon,
   SpeakerPlayIcon,
+  StarIcon,
   TwoPhonesBadgeIcon,
 } from "@/components/nova/NovaIcons";
 import {
   EarbudsIllustration,
   HeroGlobeIllustration,
-  PhoneSpeakerIllustration,
   TwoPhonesIllustration,
 } from "@/components/nova/NovaIllustrations";
 import NovaLogo from "@/components/nova/NovaLogo";
+import { useSavedPhrases } from "@/lib/favoritesStore";
 import { getDictionary, LANGUAGE_ARABIC_NAMES } from "@/lib/i18n";
-import { findLanguage } from "@/lib/languages";
+import { findLanguage, SUPPORTED_LANGUAGES } from "@/lib/languages";
 import {
   triggerHaptic,
   updateNovaSettings,
   useNovaSettings,
 } from "@/lib/settingsStore";
+import { APP_VERSION } from "@/lib/version";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -72,6 +80,9 @@ export default function HomeClient() {
   const langB = findLanguage(settings.preferredLangB || "en").code;
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPhrasesOpen, setIsPhrasesOpen] = useState(false);
+  const [isSavedOpen, setIsSavedOpen] = useState(false);
+  const savedPhrases = useSavedPhrases();
   const [pickerState, setPickerState] = useState<{
     open: boolean;
     side: "from" | "to";
@@ -115,6 +126,11 @@ export default function HomeClient() {
 
   const getLanguageDisplayName = (code: string, fallback: string) => {
     if (code === "ar") return "العربية";
+    if (code === "ar-dz") {
+      return settings.uiLocale === "ar"
+        ? "الدارجة الجزائرية"
+        : "Algerian Darija";
+    }
     if (settings.uiLocale === "ar") {
       return LANGUAGE_ARABIC_NAMES[code] ?? fallback;
     }
@@ -228,11 +244,13 @@ export default function HomeClient() {
             <div className="flex items-center gap-2.5 min-w-0">
               <NovaLogo size={40} className="shrink-0" />
               <div className="min-w-0">
-                <div className="text-[20px] font-bold tracking-tight leading-none text-[#242A26]">
+                <div className="text-[19px] sm:text-[20px] font-bold tracking-tight leading-none text-[#242A26]">
                   {dict.brandName}
                 </div>
-                <p className="mt-1 text-[11px] font-medium leading-tight text-[#565E58]">
-                  {dict.brandSubtitle}
+                <p className="mt-1 truncate text-[11px] font-semibold leading-tight text-[#315F4A]">
+                  {isRtl
+                    ? "NOVA — مترجم السفر الذكي"
+                    : "NOVA — AI Travel Interpreter"}
                 </p>
               </div>
             </div>
@@ -354,7 +372,7 @@ export default function HomeClient() {
                   }}
                   className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-end px-2 -my-1.5 font-semibold text-[#315F4A] hover:underline"
                 >
-                  13 {isRtl ? "لغة" : "languages"}
+                  {SUPPORTED_LANGUAGES.length} {isRtl ? "لغة" : "languages"}
                 </button>
               </div>
             </div>
@@ -402,135 +420,310 @@ export default function HomeClient() {
             </div>
           </section>
 
-          {/* Primary Mode Cards (Stacked mobile -> Balanced 2-col desktop) */}
+          {/* Travel Quick-Start Hero: Two Fastest On-The-Go Actions Side-by-Side */}
           <section
-            className="grid grid-cols-1 md:grid-cols-2 gap-3.5"
-            aria-label="Conversation modes"
+            aria-label={isRtl ? "انطلاق السفر السريع" : "Travel quick-start"}
+            className="space-y-2.5"
           >
-            {/* Mode A — One Phone / Share Earbuds */}
-            <div className="relative flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3 min-[360px]:p-4 nova-card-shadow">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#315F4A]/16 via-[#DCE8DD]/60 to-transparent"
-              />
-              <div className="relative grid grid-cols-[auto_1fr] items-center gap-2 min-[360px]:gap-3">
-                <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
-                  <EarbudsIllustration />
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-[11px] font-bold uppercase tracking-wider text-[#315F4A]">
+                {isRtl ? "انطلاق فوري أثناء السفر" : "Quick-Start on the Go"}
+              </h2>
+              <span className="text-[11px] font-medium text-[#565E58]">
+                {isRtl ? "بلمسة واحدة" : "Instant travel access"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+              {/* Quick-Start 1: Phone Speaker (Mode C) */}
+              <Link
+                href={`/mode-c?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
+                onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
+                className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-[#315F4A] bg-[#214536] p-3.5 sm:p-4 text-white shadow-[0_10px_24px_-8px_rgba(33,69,54,0.45)] transition hover:bg-[#1b3a2d] active:scale-[0.985] min-w-0"
+              >
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-[#DCE8DD]">
+                    <SpeakerPlayIcon className="w-5 h-5" />
+                  </span>
+                  <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#DCE8DD]">
+                    {dict.modeCBadge}
+                  </span>
                 </div>
 
-                <div className="min-w-0 space-y-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#315F4A] px-2.5 py-1 text-[11px] font-semibold text-white">
-                    <HeadphonesIcon className="w-3.5 h-3.5" />
-                    <span>{dict.modeABadge}</span>
-                  </span>
+                <div className="mt-3 space-y-1 min-w-0">
+                  <h3 className="text-[15px] sm:text-[17px] font-bold leading-tight text-white">
+                    {dict.modeCTitle}
+                  </h3>
+                  <p className="text-[11px] font-medium leading-snug text-[#DCE8DD]">
+                    {dict.modeCSubtitle}
+                  </p>
+                </div>
 
-                  <div>
-                    <h2 className="text-[17px] min-[360px]:text-[19px] font-bold leading-tight text-[#242A26]">
-                      {dict.modeATitle}
-                    </h2>
-                    <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
-                      {dict.modeASubtitle}
+                <div className="mt-3.5 flex min-h-[44px] items-center justify-between gap-1.5 rounded-full bg-white ps-3 pe-1.5 py-1 text-[11.5px] sm:text-xs font-bold text-[#214536]">
+                  <span className="truncate">
+                    {isRtl ? "ابدأ الصوت" : "Speak Now"}
+                  </span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#DCE8DD] text-[#214536]">
+                    <ArrowRightIcon
+                      className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                    />
+                  </span>
+                </div>
+              </Link>
+
+              {/* Quick-Start 2: Camera Translate (Menus & Signs) */}
+              <Link
+                href={`/camera?target=${encodeURIComponent(langA)}`}
+                onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
+                className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-[#E2DFD6] bg-white p-3.5 sm:p-4 text-[#242A26] nova-card-shadow transition hover:border-[#A8BDA9] active:scale-[0.985] min-w-0"
+              >
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#E8D8BF]/85 text-[#A86D43]">
+                    <CameraIcon className="w-5 h-5" />
+                  </span>
+                  <span className="rounded-full bg-[#DCE8DD] px-2 py-0.5 text-[10px] font-bold text-[#214536]">
+                    {isRtl ? "كاميرا" : "Camera"}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-1 min-w-0">
+                  <h3 className="text-[15px] sm:text-[17px] font-bold leading-tight text-[#242A26]">
+                    {isRtl ? "ترجمة بالكاميرا" : "Camera Translate"}
+                  </h3>
+                  <p className="text-[11px] font-medium leading-snug text-[#565E58]">
+                    {isRtl ? "قوائم الطعام واللافتات" : "Menus, signs & bills"}
+                  </p>
+                </div>
+
+                <div className="mt-3.5 flex min-h-[44px] items-center justify-between gap-1.5 rounded-full bg-[#F5F3ED] border border-[#E2DFD6] ps-3 pe-1.5 py-1 text-[11.5px] sm:text-xs font-bold text-[#214536]">
+                  <span className="truncate">
+                    {isRtl ? "صوّر وترجم" : "Scan Photo"}
+                  </span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#315F4A] text-white">
+                    <ArrowRightIcon
+                      className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                    />
+                  </span>
+                </div>
+              </Link>
+            </div>
+          </section>
+
+          {/* Prominent Offline Travel Phrases Card */}
+          <section aria-label={isRtl ? "دليل عبارات السفر" : "Offline travel phrases"}>
+            <div className="relative overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3.5 sm:p-4 nova-card-shadow">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 end-0 w-[40%] bg-gradient-to-l rtl:bg-gradient-to-r from-[#E8D8BF]/40 to-transparent"
+              />
+              <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic(settings.hapticsEnabled, 10);
+                    setIsPhrasesOpen(true);
+                  }}
+                  className="flex flex-1 min-h-[44px] items-center gap-3 min-w-0 text-start transition active:scale-[0.99]"
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#E8D8BF]/85 text-[#A86D43]">
+                    <BookOpenIcon className="w-6 h-6" />
+                  </span>
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[15px] sm:text-base font-bold text-[#242A26]">
+                        {isRtl ? "دليل عبارات السفر" : "Offline Travel Phrases"}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-[#A8BDA9] bg-[#DCE8DD] px-2 py-0.5 text-[10px] font-bold text-[#214536]">
+                        <OfflineCheckIcon className="w-3 h-3" />
+                        <span>{isRtl ? "يعمل بدون إنترنت" : "Offline Ready"}</span>
+                      </span>
+                    </div>
+                    <p className="text-xs font-medium text-[#565E58]">
+                      {isRtl
+                        ? "7 فئات: المطار، الفندق، التاكسي، الطعام، الصرافة والطوارئ"
+                        : "49 phrases across Airport, Hotel, Taxi, Dining, SIM & Emergency"}
                     </p>
                   </div>
+                </button>
 
-                  <Link
-                    href={`/mode-a?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
-                    onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
-                    className="inline-flex min-h-[44px] w-full items-center justify-between gap-1.5 rounded-full bg-[#315F4A] ps-3 min-[360px]:ps-3.5 pe-1.5 py-1.5 text-[11.5px] min-[360px]:text-[13px] font-semibold leading-tight text-white shadow-[0_6px_16px_-4px_rgba(33,69,54,0.38)] transition hover:bg-[#214536] active:scale-[0.98]"
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(settings.hapticsEnabled, 10);
+                      setIsPhrasesOpen(true);
+                    }}
+                    className="inline-flex min-h-[44px] flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-full bg-[#315F4A] px-4 text-xs font-semibold text-white transition hover:bg-[#214536] active:scale-[0.98]"
                   >
-                    <span>{dict.modeACta}</span>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[#214536]">
-                      <ArrowRightIcon
-                        className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
-                      />
-                    </span>
+                    <span>{isRtl ? "فتح الدليل" : "Browse"}</span>
+                  </button>
+                  <Link
+                    href="/phrases"
+                    aria-label={isRtl ? "فتح صفحة العبارات الكاملة" : "Open full phrases page"}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] transition hover:bg-[#DCE8DD]"
+                  >
+                    <ArrowRightIcon
+                      className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                    />
                   </Link>
                 </div>
               </div>
             </div>
+          </section>
 
-            {/* Mode B — Two Phones */}
-            <div className="relative flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3 min-[360px]:p-4 nova-card-shadow">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#E8D8BF]/70 via-[#E8D8BF]/30 to-transparent"
-              />
-              <div className="relative grid grid-cols-[auto_1fr] items-center gap-2 min-[360px]:gap-3">
-                <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
-                  <TwoPhonesIllustration />
-                </div>
+          {/* Core Conversation & Listening Modes */}
+          <section
+            className="space-y-2.5"
+            aria-label={isRtl ? "أوضاع المحادثة والاستماع" : "Conversation and listening modes"}
+          >
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-[11px] font-bold uppercase tracking-wider text-[#565E58]">
+                {isRtl ? "أوضاع المحادثة الحية" : "Conversation & Listening"}
+              </h2>
+            </div>
 
-                <div className="min-w-0 space-y-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#A86D43] px-2.5 py-1 text-[11px] font-semibold text-white">
-                    <TwoPhonesBadgeIcon className="w-3.5 h-3.5" />
-                    <span>{dict.modeBBadge}</span>
-                  </span>
-
-                  <div>
-                    <h2 className="text-[17px] min-[360px]:text-[19px] font-bold leading-tight text-[#242A26]">
-                      {dict.modeBTitle}
-                    </h2>
-                    <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
-                      {dict.modeBSubtitle}
-                    </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Mode A — One Phone / Shared Earbuds */}
+              <div className="relative flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3.5 sm:p-4 nova-card-shadow">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#315F4A]/14 via-[#DCE8DD]/55 to-transparent"
+                />
+                <div className="relative grid grid-cols-[auto_1fr] items-center gap-2.5 sm:gap-3">
+                  <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
+                    <EarbudsIllustration />
                   </div>
 
-                  <Link
-                    href={`/mode-b?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
-                    onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
-                    className="inline-flex min-h-[44px] w-full items-center justify-between gap-1.5 rounded-full bg-[#E8D8BF] ps-3 min-[360px]:ps-3.5 pe-1.5 py-1.5 text-[11.5px] min-[360px]:text-[13px] font-semibold leading-tight text-[#242A26] transition hover:bg-[#dfcba8] active:scale-[0.98]"
-                  >
-                    <span>{dict.modeBCta}</span>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#242A26]/20 bg-white/80 text-[#242A26]">
-                      <ArrowRightIcon
-                        className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
-                      />
+                  <div className="min-w-0 space-y-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#315F4A] px-2.5 py-1 text-[11px] font-semibold text-white">
+                      <HeadphonesIcon className="w-3.5 h-3.5" />
+                      <span>{dict.modeABadge}</span>
                     </span>
-                  </Link>
+
+                    <div>
+                      <h3 className="text-[17px] min-[360px]:text-[18px] font-bold leading-tight text-[#242A26]">
+                        {dict.modeATitle}
+                      </h3>
+                      <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
+                        {dict.modeASubtitle}
+                      </p>
+                    </div>
+
+                    <Link
+                      href={`/mode-a?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
+                      onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
+                      className="inline-flex min-h-[44px] w-full items-center justify-between gap-1.5 rounded-full bg-[#315F4A] ps-3.5 pe-1.5 py-1.5 text-xs sm:text-[13px] font-semibold leading-tight text-white shadow-[0_6px_16px_-4px_rgba(33,69,54,0.34)] transition hover:bg-[#214536] active:scale-[0.98]"
+                    >
+                      <span>{dict.modeACta}</span>
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[#214536]">
+                        <ArrowRightIcon
+                          className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                        />
+                      </span>
+                    </Link>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mode B — Two-Phone Call */}
+              <div className="relative flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3.5 sm:p-4 nova-card-shadow">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#E8D8BF]/70 via-[#E8D8BF]/30 to-transparent"
+                />
+                <div className="relative grid grid-cols-[auto_1fr] items-center gap-2.5 sm:gap-3">
+                  <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
+                    <TwoPhonesIllustration />
+                  </div>
+
+                  <div className="min-w-0 space-y-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#A86D43] px-2.5 py-1 text-[11px] font-semibold text-white">
+                      <TwoPhonesBadgeIcon className="w-3.5 h-3.5" />
+                      <span>{dict.modeBBadge}</span>
+                    </span>
+
+                    <div>
+                      <h3 className="text-[17px] min-[360px]:text-[18px] font-bold leading-tight text-[#242A26]">
+                        {dict.modeBTitle}
+                      </h3>
+                      <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
+                        {dict.modeBSubtitle}
+                      </p>
+                    </div>
+
+                    <Link
+                      href={`/mode-b?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
+                      onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
+                      className="inline-flex min-h-[44px] w-full items-center justify-between gap-1.5 rounded-full bg-[#E8D8BF] ps-3.5 pe-1.5 py-1.5 text-xs sm:text-[13px] font-semibold leading-tight text-[#242A26] transition hover:bg-[#dfcba8] active:scale-[0.98]"
+                    >
+                      <span>{dict.modeBCta}</span>
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#242A26]/20 bg-white/80 text-[#242A26]">
+                        <ArrowRightIcon
+                          className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
+                        />
+                      </span>
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Mode C — Phone Speaker (No earbuds · One phone) */}
-            <div className="relative md:col-span-2 flex flex-col justify-between overflow-hidden rounded-[26px] border border-[#E2DFD6] bg-white p-3 min-[360px]:p-4 nova-card-shadow">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 start-0 w-[44%] bg-gradient-to-tr from-[#315F4A]/14 via-[#E8D8BF]/45 to-transparent"
-              />
-              <div className="relative grid grid-cols-[auto_1fr] items-center gap-2 min-[360px]:gap-3.5">
-                <div className="flex items-center justify-center scale-90 min-[360px]:scale-100 origin-center">
-                  <PhoneSpeakerIllustration />
-                </div>
-
-                <div className="min-w-0 space-y-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#214536] px-2.5 py-1 text-[11px] font-semibold text-white">
-                    <SpeakerPlayIcon className="w-3.5 h-3.5" />
-                    <span>{dict.modeCBadge}</span>
+            {/* Secondary Utilities: Live Listen + Saved Phrases */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Link
+                href={`/listen?from=${encodeURIComponent(langB)}&to=${encodeURIComponent(langA)}`}
+                onClick={() => triggerHaptic(settings.hapticsEnabled, 10)}
+                className="flex min-h-[56px] items-center justify-between gap-3 rounded-[22px] border border-[#E2DFD6] bg-white p-3.5 nova-soft-shadow transition hover:border-[#A8BDA9] active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#DCE8DD] text-[#214536]">
+                    <HeadphonesListenIcon className="w-5 h-5" />
                   </span>
-
-                  <div>
-                    <h2 className="text-[17px] min-[360px]:text-[19px] font-bold leading-tight text-[#242A26]">
-                      {dict.modeCTitle}
-                    </h2>
-                    <p className="mt-0.5 text-xs font-medium leading-snug text-[#565E58]">
-                      {dict.modeCSubtitle}
-                    </p>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-[#242A26] truncate">
+                      {isRtl ? "الاستماع الفوري" : "Live Listen"}
+                    </div>
+                    <div className="text-[11px] font-medium text-[#565E58] truncate">
+                      {isRtl
+                        ? "الجولات السياحية والإعلانات والشروحات"
+                        : "Tours, announcements & live subtitles"}
+                    </div>
                   </div>
-
-                  <Link
-                    href={`/mode-c?langA=${encodeURIComponent(langA)}&langB=${encodeURIComponent(langB)}`}
-                    onClick={() => triggerHaptic(settings.hapticsEnabled, 12)}
-                    className="inline-flex min-h-[44px] w-full md:max-w-xs items-center justify-between gap-1.5 rounded-full border border-[#315F4A]/25 bg-[#DCE8DD]/75 ps-3 min-[360px]:ps-3.5 pe-1.5 py-1.5 text-[11.5px] min-[360px]:text-[13px] font-semibold leading-tight text-[#214536] nova-soft-shadow transition hover:bg-[#DCE8DD] active:scale-[0.98]"
-                  >
-                    <span>{dict.modeCCta}</span>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#315F4A] text-white">
-                      <ArrowRightIcon
-                        className={`w-4 h-4 ${isRtl ? "rotate-180" : ""}`}
-                      />
-                    </span>
-                  </Link>
                 </div>
-              </div>
+                <ArrowRightIcon
+                  className={`w-4 h-4 shrink-0 text-[#315F4A] ${isRtl ? "rotate-180" : ""}`}
+                />
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic(settings.hapticsEnabled, 10);
+                  setIsSavedOpen(true);
+                }}
+                className="flex min-h-[56px] items-center justify-between gap-3 rounded-[22px] border border-[#E2DFD6] bg-white p-3.5 text-start nova-soft-shadow transition hover:border-[#C58B62] active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#E8D8BF]/80 text-[#A86D43]">
+                    <StarIcon className="w-5 h-5" filled={savedPhrases.length > 0} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-[#242A26] truncate">
+                      {isRtl ? "العبارات المحفوظة" : "Saved Phrases"}
+                    </div>
+                    <div className="text-[11px] font-medium text-[#565E58] truncate">
+                      {savedPhrases.length > 0
+                        ? `${savedPhrases.length} ${isRtl ? "عبارة في المفضلة" : "bookmarked"}`
+                        : isRtl
+                          ? "مفضلتك الصوتية والنصية"
+                          : "Starred translations with replay"}
+                    </div>
+                  </div>
+                </div>
+                <ArrowRightIcon
+                  className={`w-4 h-4 shrink-0 text-[#A86D43] ${isRtl ? "rotate-180" : ""}`}
+                />
+              </button>
             </div>
           </section>
         </div>
@@ -596,6 +789,13 @@ export default function HomeClient() {
             </span>
             <span className="h-px w-10 bg-[#E2DFD6]" />
           </div>
+
+          <p
+            dir="ltr"
+            className="text-center font-mono text-[10px] font-medium tracking-wide text-[#777F79]"
+          >
+            NOVA v{APP_VERSION}
+          </p>
         </footer>
       </main>
 
@@ -622,6 +822,27 @@ export default function HomeClient() {
         onClose={() => setIsTestModalOpen(false)}
         langALabel={langAInfo.label}
         langBLabel={langBInfo.label}
+      />
+
+      {isPhrasesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-[#242A26]/45 backdrop-blur-xs p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={isRtl ? "عبارات السفر السريعة" : "Quick Travel Phrases"}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsPhrasesOpen(false);
+          }}
+        >
+          <div className="h-[88dvh] w-full max-w-xl overflow-y-auto rounded-t-[28px] sm:rounded-[28px] border border-[#E2DFD6] bg-[#F5F3ED] shadow-[0_24px_60px_-15px_rgba(33,69,54,0.28)]">
+            <QuickPhrasesView onCloseModal={() => setIsPhrasesOpen(false)} />
+          </div>
+        </div>
+      )}
+
+      <SavedPhrasesModal
+        isOpen={isSavedOpen}
+        onClose={() => setIsSavedOpen(false)}
       />
     </div>
   );

@@ -202,11 +202,12 @@ export class MicManager {
       });
 
     // If no explicit override was chosen and OS defaulted to a Bluetooth HFP mic
-    // (or a generic "default" alias when a dedicated non-BT mic is available),
+    // (or in non-VoIP Mode A, a generic "default" alias when a dedicated non-BT mic exists),
     // immediately switch to the best non-Bluetooth (built-in) mic.
+    const shouldReplaceDefault = !options?.voiceCallAec && matchedDevice.isDefault;
     if (
       !preferredDeviceId &&
-      (matchedDevice.classification === "bluetooth" || matchedDevice.isDefault) &&
+      (matchedDevice.classification === "bluetooth" || shouldReplaceDefault) &&
       list.recommendedDeviceId &&
       list.recommendedDeviceId !== currentDeviceId
     ) {

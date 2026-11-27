@@ -5,11 +5,13 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AudioSettingsDrawer from "@/components/AudioSettingsDrawer";
 import AudioVisualizer from "@/components/AudioVisualizer";
+import ConversationSummaryModal from "@/components/nova/ConversationSummaryModal";
 import EarbudTestModal from "@/components/EarbudTestModal";
 import LanguageFlag from "@/components/nova/LanguageFlag";
 import RecoveryBanner from "@/components/nova/RecoveryBanner";
 import {
   ArrowLeftIcon,
+  CameraFlipIcon,
   ChevronDownIcon,
   CloseIcon,
   CopyIcon,
@@ -18,12 +20,22 @@ import {
   PhoneCallIcon,
   PhoneOffIcon,
   QrCodeIcon,
+  SendArrowIcon,
   SettingsGearIcon,
+  SparklesIcon,
   SpeakerPlayIcon,
+  StarIcon,
   TrashIcon,
+  VideoCamIcon,
+  VideoOffCamIcon,
   VolumeMutedIcon,
 } from "@/components/nova/NovaIcons";
 import RoomQRCode from "@/components/RoomQRCode";
+import {
+  buildSavedPhraseKey,
+  toggleSavedPhrase,
+  useSavedPhrases,
+} from "@/lib/favoritesStore";
 import {
   GeminiLiveTranslatorClient,
   type LiveConnectionStatus,
@@ -118,6 +130,26 @@ function formatCallDuration(totalSec: number): string {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+function createRoomTextItem(params: {
+  sender: ParticipantRole;
+  sourceText: string;
+  translatedText: string;
+  sourceLang: string;
+  targetLang: string;
+}): RoomTranscriptItem {
+  const now = Date.now();
+  return {
+    id: `text-${params.sender}-${now}-${Math.random().toString(36).slice(2, 6)}`,
+    sender: params.sender,
+    sourceText: params.sourceText,
+    translatedText: params.translatedText,
+    sourceLang: params.sourceLang,
+    targetLang: params.targetLang,
+    isFinal: true,
+    timestamp: now,
+  };
+}
+
 export default function RoomClient() {
   const params = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
@@ -149,6 +181,10 @@ export default function RoomClient() {
   const isOnline = useIsOnline();
   const isArabicUi = settings.uiLocale === "ar";
   const persistedMessages = usePersistedRoomMessages(roomId);
+  const savedPhrases = useSavedPhrases();
+  const savedKeys = new Set(
+    savedPhrases.map((s) => buildSavedPhraseKey(s.sourceText, s.translatedText))
+  );
 
   const [room, setRoom] = useState<PublicRoomSnapshot | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
@@ -167,6 +203,9 @@ export default function RoomClient() {
   const [showQR, setShowQR] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [earbudTestOpen, setEarbudTestOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [textChatInput, setTextChatInput] = useState("");
+  const [sendingTextChat, setSendingTextChat] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
   const [replayingMessageId, setReplayingMessageId] = useState<string | null>(
     null
@@ -185,6 +224,7 @@ export default function RoomClient() {
   const [remoteVoiceLevel, setRemoteVoiceLevel] = useState(0);
   const [isVoiceDucked, setIsVoiceDucked] = useState(false);
   const [callState, setCallState] = useState<CallConnectionState>("idle");
+  const [iceState, setIceState] = useState<RTCIceConnectionState>("new");
   const [callElapsedSec, setCallElapsedSec] = useState(0);
   const [originalVoiceEnabled, setOriginalVoiceEnabled] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -204,13 +244,25 @@ export default function RoomClient() {
     : ephemeralMessages;
   const wakeLockActive = useWakeLock(isRunning && settings.wakeLockEnabled);
 
+  const [videoEnabled, setVideoEnabled] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("user");
+  const [remoteVideoActive, setRemoteVideoActive] = useState(false);
+  const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
+  const [showVideoSubtitles, setShowVideoSubtitles] = useState(true);
+
   const clientRef = useRef<GeminiLiveTranslatorClient | null>(null);
   const vadRef = useRef<VadManager | null>(null);
   const callManagerRef = useRef<WebRtcCallManager | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const localVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const localVideoStreamRef = useRef<MediaStream | null>(null);
+  const remoteVideoStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioUsingFallbackRef = useRef(false);
   const originalVoiceEnabledRef = useRef(true);
   const voiceCallDesiredRef = useRef(true);
+  const videoDesiredRef = useRef(false);
+  const callStateRef = useRef<CallConnectionState>("idle");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
   const rafRef = useRef<number | null>(null);
@@ -227,7 +279,9 @@ export default function RoomClient() {
   const lastTranscriptSentRef = useRef(0);
   const lastReceivedAudioSeqRef = useRef(0);
   const lastReceivedSignalSeqRef = useRef(0);
+  const initialAudioCursorSyncedRef = useRef(false);
   const initialSignalCursorSyncedRef = useRef(false);
+  const lastSseMessageAtRef = useRef(0);
   const latestPartnerMessageIdRef = useRef<string | null>(null);
   const sseActiveRef = useRef(false);
   const pttActiveRef = useRef(false);
@@ -291,6 +345,14 @@ export default function RoomClient() {
   }, [originalVoiceEnabled]);
 
   useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+
+  useEffect(() => {
+    callManagerRef.current?.setRole(role);
+  }, [role]);
+
+  useEffect(() => {
     if (callState !== "connected") return;
     const timer = setInterval(() => {
       setCallElapsedSec((s) => s + 1);
@@ -298,19 +360,69 @@ export default function RoomClient() {
     return () => clearInterval(timer);
   }, [callState]);
 
-  const getOrCreateCallManager = useCallback(() => {
-    if (callManagerRef.current) return callManagerRef.current;
+  const stopLocalVideoStream = useCallback(() => {
+    if (localVideoStreamRef.current) {
+      for (const track of localVideoStreamRef.current.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          // Ignore
+        }
+      }
+      localVideoStreamRef.current = null;
+    }
+    if (localVideoElRef.current) {
+      localVideoElRef.current.srcObject = null;
+    }
+    videoDesiredRef.current = false;
+    setVideoEnabled(false);
+  }, []);
 
-    const manager = new WebRtcCallManager(role, {
+  useEffect(() => {
+    if (videoEnabled && localVideoElRef.current && localVideoStreamRef.current) {
+      localVideoElRef.current.srcObject = localVideoStreamRef.current;
+      void localVideoElRef.current.play().catch(() => {});
+    }
+  }, [videoEnabled, cameraFacing]);
+
+  useEffect(() => {
+    const stream = remoteVideoStream ?? remoteVideoStreamRef.current;
+    const video = remoteVideoElRef.current;
+    if (video && stream) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      void video.play().catch(() => {});
+    }
+  }, [remoteVideoStream, videoEnabled, remoteVideoActive]);
+
+  const getOrCreateCallManager = useCallback(() => {
+    if (callManagerRef.current) {
+      callManagerRef.current.setRole(roleRef.current);
+      return callManagerRef.current;
+    }
+
+    const manager = new WebRtcCallManager(roleRef.current, {
       onStateChange: (state, detail) => {
         setCallState(state);
         if (state === "idle" || state === "disconnected") {
           setCallElapsedSec(0);
           setIsVoiceDucked(false);
           setRemoteVoiceLevel(0);
+          setRemoteVideoActive(false);
+          remoteVideoStreamRef.current = null;
+          setRemoteVideoStream(null);
         }
         if (state === "error" && detail) {
           setStatusError(detail);
+        }
+      },
+      onIceStateChange: (nextIceState) => {
+        setIceState(nextIceState);
+        if (nextIceState === "failed") {
+          setStatusError(
+            "Direct peer connection blocked by network firewall (ICE failed); retrying call route while live translation continues."
+          );
         }
       },
       onRemoteStream: (stream) => {
@@ -333,11 +445,30 @@ export default function RoomClient() {
           void audioEl.play().catch(() => {});
         }
       },
+      onRemoteVideoStream: (stream) => {
+        remoteVideoStreamRef.current = stream;
+        setRemoteVideoStream(stream);
+        if (remoteVideoElRef.current) {
+          remoteVideoElRef.current.srcObject = stream;
+          if (stream) {
+            void remoteVideoElRef.current.play().catch(() => {});
+          }
+        }
+      },
+      onRemoteVideoActiveChange: (active) => {
+        setRemoteVideoActive(active);
+      },
       onRemoteEnded: () => {
         getStereoEngine().detachRemoteVoiceStream();
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = null;
         }
+        remoteVideoStreamRef.current = null;
+        setRemoteVideoStream(null);
+        if (remoteVideoElRef.current) {
+          remoteVideoElRef.current.srcObject = null;
+        }
+        setRemoteVideoActive(false);
         setRemoteVoiceLevel(0);
         setIsVoiceDucked(false);
         setCallElapsedSec(0);
@@ -351,14 +482,14 @@ export default function RoomClient() {
             body: JSON.stringify({ role: roleRef.current, kind, payload }),
           });
         } catch {
-          // Non-fatal network blip; ICE/fallback poll retries
+          // Non-fatal network blip; ICE/call-ready retry recovers
         }
       },
     });
 
     callManagerRef.current = manager;
     return manager;
-  }, [role, roomId]);
+  }, [roomId]);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -446,15 +577,53 @@ export default function RoomClient() {
       audioBatchRef.current.push(pcm16);
       audioBatchSamplesRef.current += pcm16.length;
 
-      if (audioBatchSamplesRef.current >= Math.round(sampleRate * 0.16)) {
+      if (audioBatchSamplesRef.current >= Math.round(sampleRate * 0.22)) {
         void flushAudioRelay();
       } else if (!flushTimerRef.current) {
         flushTimerRef.current = setTimeout(() => {
           void flushAudioRelay();
-        }, 120);
+        }, 150);
       }
     },
     [flushAudioRelay]
+  );
+
+  const syncMessagesFromServer = useCallback(
+    (serverMsgs: RoomTranscriptItem[], activeRole: ParticipantRole) => {
+      const latestPartner = [...serverMsgs]
+        .reverse()
+        .find((m) => m.sender !== activeRole);
+      if (latestPartner) {
+        latestPartnerMessageIdRef.current = latestPartner.id;
+      }
+      if (saveTranscriptsRef.current) {
+        mergeAndSaveRoomMessages(roomId, serverMsgs);
+      } else {
+        setEphemeralMessages(serverMsgs);
+      }
+    },
+    [roomId]
+  );
+
+  const upsertSingleMessage = useCallback(
+    (item: RoomTranscriptItem, activeRole: ParticipantRole) => {
+      if (item.sender !== activeRole) {
+        latestPartnerMessageIdRef.current = item.id;
+      }
+      if (saveTranscriptsRef.current) {
+        upsertPersistedRoomMessage(roomId, item);
+      } else {
+        setEphemeralMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === item.id);
+          const next =
+            idx >= 0
+              ? prev.map((existing, i) => (i === idx ? item : existing))
+              : [...prev, item];
+          return next.sort((a, b) => a.timestamp - b.timestamp);
+        });
+      }
+    },
+    [roomId]
   );
 
   const stopAudioSession = useCallback(
@@ -467,6 +636,14 @@ export default function RoomClient() {
       audioBatchSamplesRef.current = 0;
 
       callManagerRef.current?.hangup(true);
+      stopLocalVideoStream();
+      remoteVideoStreamRef.current = null;
+      setRemoteVideoStream(null);
+      if (remoteVideoElRef.current) {
+        remoteVideoElRef.current.srcObject = null;
+      }
+      setRemoteVideoActive(false);
+      setIceState("new");
       getStereoEngine().detachRemoteVoiceStream();
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = null;
@@ -500,7 +677,7 @@ export default function RoomClient() {
       }
       syncAudioDiagnostics();
     },
-    [syncAudioDiagnostics]
+    [stopLocalVideoStream, syncAudioDiagnostics]
   );
 
   // SSE + 1000ms fallback polling (preserved intact from Phase 3)
@@ -529,44 +706,6 @@ export default function RoomClient() {
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     sseActiveRef.current = false;
 
-    const syncMessagesFromServer = (
-      serverMsgs: RoomTranscriptItem[],
-      activeRole: ParticipantRole
-    ) => {
-      const latestPartner = [...serverMsgs]
-        .reverse()
-        .find((m) => m.sender !== activeRole);
-      if (latestPartner) {
-        latestPartnerMessageIdRef.current = latestPartner.id;
-      }
-      if (saveTranscriptsRef.current) {
-        mergeAndSaveRoomMessages(roomId, serverMsgs);
-      } else {
-        setEphemeralMessages(serverMsgs);
-      }
-    };
-
-    const upsertSingleMessage = (
-      item: RoomTranscriptItem,
-      activeRole: ParticipantRole
-    ) => {
-      if (item.sender !== activeRole) {
-        latestPartnerMessageIdRef.current = item.id;
-      }
-      if (saveTranscriptsRef.current) {
-        upsertPersistedRoomMessage(roomId, item);
-      } else {
-        setEphemeralMessages((prev) => {
-          const idx = prev.findIndex((m) => m.id === item.id);
-          const next =
-            idx >= 0
-              ? prev.map((existing, i) => (i === idx ? item : existing))
-              : [...prev, item];
-          return next.sort((a, b) => a.timestamp - b.timestamp);
-        });
-      }
-    };
-
     const applyRoomSnapshot = (
       snap: PublicRoomSnapshot,
       activeRole: ParticipantRole
@@ -582,8 +721,11 @@ export default function RoomClient() {
         return;
       }
       void sessionSyncRef.current?.syncWithRoomSnapshot(snap);
-      if (snap.latestAudioSeq > lastReceivedAudioSeqRef.current) {
-        lastReceivedAudioSeqRef.current = snap.latestAudioSeq;
+      if (!initialAudioCursorSyncedRef.current) {
+        initialAudioCursorSyncedRef.current = true;
+        if (snap.latestAudioSeq > lastReceivedAudioSeqRef.current) {
+          lastReceivedAudioSeqRef.current = snap.latestAudioSeq;
+        }
       }
       if (!initialSignalCursorSyncedRef.current) {
         initialSignalCursorSyncedRef.current = true;
@@ -602,6 +744,7 @@ export default function RoomClient() {
       es = new EventSource(`/api/rooms/${roomId}/events`);
       es.onmessage = (ev) => {
         sseActiveRef.current = true;
+        lastSseMessageAtRef.current = Date.now();
         setRoomSyncStatus("connected");
         const currentRole = roleRef.current || activeRole;
         try {
@@ -680,7 +823,12 @@ export default function RoomClient() {
       };
 
       pollTimer = setInterval(() => {
-        if (cancelled || sseActiveRef.current) return;
+        const shouldPollWhileConnecting =
+          callStateRef.current === "connecting" &&
+          Date.now() - lastSseMessageAtRef.current > 1800;
+        if (cancelled || (sseActiveRef.current && !shouldPollWhileConnecting)) {
+          return;
+        }
         const currentRole = roleRef.current || activeRole;
         void fetch(
           `/api/rooms/${roomId}?afterAudioSeq=${lastReceivedAudioSeqRef.current}&afterSignalSeq=${lastReceivedSignalSeqRef.current}`,
@@ -797,6 +945,7 @@ export default function RoomClient() {
         const serverRole = data.role ?? "guest";
         setVerifiedRole(serverRole);
         roleRef.current = serverRole;
+        callManagerRef.current?.setRole(serverRole);
         if (serverRole === "host") {
           setHostInviteToken(data.inviteToken ?? null);
           setHostPasscode(data.passcode ?? null);
@@ -823,7 +972,14 @@ export default function RoomClient() {
       controller.abort();
       es?.close();
     };
-  }, [roomId, retrySeed, stopAudioSession, getOrCreateCallManager]);
+  }, [
+    roomId,
+    retrySeed,
+    stopAudioSession,
+    getOrCreateCallManager,
+    syncMessagesFromServer,
+    upsertSingleMessage,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -885,6 +1041,8 @@ export default function RoomClient() {
                 isFinal: turn.isFinal,
                 timestamp: turn.timestamp,
               };
+
+              upsertSingleMessage(item, currentRole);
 
               void fetch(`/api/rooms/${roomId}/relay`, {
                 method: "POST",
@@ -974,7 +1132,13 @@ export default function RoomClient() {
 
     sessionSyncRef.current = controller;
     return controller;
-  }, [flushAudioRelay, queueAudioForPartner, roomId, stopAudioSession]);
+  }, [
+    flushAudioRelay,
+    queueAudioForPartner,
+    roomId,
+    stopAudioSession,
+    upsertSingleMessage,
+  ]);
 
   const startAudioSession = useCallback(
     async (unlockedCtx: AudioContext, currentRoom: PublicRoomSnapshot) => {
@@ -1002,6 +1166,12 @@ export default function RoomClient() {
 
         const vad = new VadManager({
           onTrackEnded: handleUnexpectedMicLoss,
+          onMicAcquired: (info) => {
+            setSelectedMicId(info.deviceId);
+            setActiveMicLabel(info.label);
+            setIsBluetoothMicRisk(info.isBluetoothRisk);
+            void callManagerRef.current?.replaceLocalStream(info.stream);
+          },
           onInputLevel: (level) => setInputLevel(level),
           onSpeechStart: () => {
             if (captureModeRef.current === "vad") {
@@ -1106,7 +1276,17 @@ export default function RoomClient() {
 
         if (voiceCallDesiredRef.current) {
           const callMgr = getOrCreateCallManager();
-          await callMgr.startCall(micInfo.stream, false);
+          try {
+            await callMgr.startCall(
+              micInfo.stream,
+              false,
+              localVideoStreamRef.current?.getVideoTracks()[0] ?? null
+            );
+          } catch {
+            // Live Gemini translation remains active independently even if WebRTC handshake lags
+          }
+          getStereoEngine().unlockSync();
+          syncAudioDiagnostics();
         }
       } catch (err) {
         setLiveStatus("error");
@@ -1146,12 +1326,33 @@ export default function RoomClient() {
     handleStartLive(true);
   };
 
+  const getSharedLiveMicStream = async (): Promise<MediaStream> => {
+    const activeStream = getMicManager().getActiveMic()?.stream;
+    if (
+      activeStream &&
+      activeStream.getAudioTracks().some((t) => t.readyState === "live")
+    ) {
+      return activeStream;
+    }
+    const micInfo = await getMicManager().acquireMic(
+      selectedMicId || undefined,
+      { voiceCallAec: true }
+    );
+    setSelectedMicId(micInfo.deviceId);
+    setActiveMicLabel(micInfo.label);
+    setIsBluetoothMicRisk(micInfo.isBluetoothRisk);
+    return micInfo.stream;
+  };
+
   const handleToggleVoiceCall = async () => {
     if (!isRunning) return;
     triggerHaptic(settings.hapticsEnabled, 10);
+    getStereoEngine().unlockSync();
+    syncAudioDiagnostics();
     const callMgr = getOrCreateCallManager();
     if (callState !== "idle" && callState !== "disconnected") {
       callMgr.hangup(true);
+      stopLocalVideoStream();
       getStereoEngine().detachRemoteVoiceStream();
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = null;
@@ -1159,17 +1360,110 @@ export default function RoomClient() {
       setCallElapsedSec(0);
       setIsVoiceDucked(false);
       setRemoteVoiceLevel(0);
+      setIceState("new");
       return;
     }
-    const micStream = getMicManager().getActiveMic()?.stream;
-    if (micStream) {
-      await callMgr.startCall(micStream, isMuted);
-    } else {
-      const micInfo = await getMicManager().acquireMic(
-        selectedMicId || undefined,
-        { voiceCallAec: true }
+    const videoTrack = localVideoStreamRef.current?.getVideoTracks()[0] ?? null;
+    const micStream = await getSharedLiveMicStream();
+    await callMgr.startCall(micStream, isMuted, videoTrack);
+    getStereoEngine().unlockSync();
+  };
+
+  const acquireCameraTrack = async (
+    facing: "user" | "environment"
+  ): Promise<MediaStreamTrack> => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      throw new Error("Camera access requires HTTPS and a supported browser.");
+    }
+    if (localVideoStreamRef.current) {
+      for (const t of localVideoStreamRef.current.getTracks()) {
+        try {
+          t.stop();
+        } catch {
+          // Ignore
+        }
+      }
+      localVideoStreamRef.current = null;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing },
+      audio: false,
+    });
+    const track = stream.getVideoTracks()[0];
+    if (!track) {
+      throw new Error("No camera video track available.");
+    }
+    localVideoStreamRef.current = stream;
+    if (localVideoElRef.current) {
+      localVideoElRef.current.srcObject = stream;
+      void localVideoElRef.current.play().catch(() => {});
+    }
+    return track;
+  };
+
+  const handleToggleVideo = async () => {
+    triggerHaptic(settings.hapticsEnabled, 10);
+    // Unlock AudioContext synchronously before awaiting camera permission so iOS/Android keep the gesture token
+    const ctx = getStereoEngine().unlockSync();
+    syncAudioDiagnostics();
+    if (videoEnabled) {
+      stopLocalVideoStream();
+      await callManagerRef.current?.setLocalVideoTrack(null);
+      return;
+    }
+    try {
+      const track = await acquireCameraTrack(cameraFacing);
+      videoDesiredRef.current = true;
+      setVideoEnabled(true);
+
+      if (!isRunning) {
+        if (!room || isStartingRef.current) return;
+        voiceCallDesiredRef.current = true;
+        void startAudioSession(ctx, room);
+        return;
+      }
+
+      const callMgr = getOrCreateCallManager();
+      if (callState === "idle" || callState === "disconnected") {
+        const micStream = await getSharedLiveMicStream();
+        await callMgr.startCall(micStream, isMuted, track);
+        getStereoEngine().unlockSync();
+      } else {
+        await callMgr.setLocalVideoTrack(track);
+      }
+    } catch (err) {
+      stopLocalVideoStream();
+      setStatusError(
+        err instanceof Error
+          ? err.message
+          : isArabicUi
+            ? "تعذر تشغيل الكاميرا."
+            : "Could not access camera."
       );
-      await callMgr.startCall(micInfo.stream, isMuted);
+    }
+  };
+
+  const handleFlipCamera = async () => {
+    if (!videoEnabled) return;
+    triggerHaptic(settings.hapticsEnabled, 10);
+    getStereoEngine().unlockSync();
+    const nextFacing: "user" | "environment" =
+      cameraFacing === "user" ? "environment" : "user";
+    try {
+      const track = await acquireCameraTrack(nextFacing);
+      setCameraFacing(nextFacing);
+      await callManagerRef.current?.setLocalVideoTrack(track);
+    } catch (err) {
+      setStatusError(
+        err instanceof Error
+          ? err.message
+          : isArabicUi
+            ? "تعذر تبديل الكاميرا."
+            : "Could not switch camera."
+      );
     }
   };
 
@@ -1391,6 +1685,87 @@ export default function RoomClient() {
     }, 1400);
   };
 
+  const handleSendTextChat = async (
+    myLangCode: string,
+    partnerLangCode: string
+  ) => {
+    const cleanText = textChatInput.trim();
+    if (!cleanText || sendingTextChat) return;
+
+    triggerHaptic(settings.hapticsEnabled, 8);
+    setSendingTextChat(true);
+    setStatusError(null);
+
+    try {
+      const res = await fetch("/api/translate-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          text: cleanText,
+          sourceLang: myLangCode,
+          targetLang: partnerLangCode,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        translatedText?: string;
+        error?: string;
+      };
+      if (!res.ok || !json.translatedText) {
+        throw new Error(
+          json.error ||
+            (isArabicUi
+              ? "تعذر ترجمة الرسالة النصية."
+              : "Could not translate message.")
+        );
+      }
+
+      const item = createRoomTextItem({
+        sender: role,
+        sourceText: cleanText,
+        translatedText: json.translatedText,
+        sourceLang: myLangCode,
+        targetLang: partnerLangCode,
+      });
+
+      if (settings.saveTranscripts) {
+        upsertPersistedRoomMessage(roomId, item);
+      } else {
+        setEphemeralMessages((prev) => [...prev, item]);
+      }
+
+      const relayRes = await fetch(`/api/rooms/${roomId}/relay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          role,
+          kind: "transcript",
+          item,
+        }),
+      });
+      if (!relayRes.ok) {
+        throw new Error(
+          isArabicUi
+            ? "تعذر إرسال النص إلى الشريك."
+            : "Could not deliver message to partner."
+        );
+      }
+
+      setTextChatInput("");
+    } catch (err) {
+      setStatusError(
+        err instanceof Error
+          ? err.message
+          : isArabicUi
+            ? "تعذر إرسال الرسالة."
+            : "Failed to send message."
+      );
+    } finally {
+      setSendingTextChat(false);
+    }
+  };
+
   useEffect(() => {
     if (!confirmEndOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1463,8 +1838,10 @@ export default function RoomClient() {
         }).catch(() => {});
       }
 
-      setVerifiedRole(data.role ?? "guest");
-      roleRef.current = data.role ?? "guest";
+      const joinedRole = data.role ?? "guest";
+      setVerifiedRole(joinedRole);
+      roleRef.current = joinedRole;
+      callManagerRef.current?.setRole(joinedRole);
       setRoom(data.room);
       setNeedsJoinAuth(false);
       setJoinConfirmed(true);
@@ -1790,6 +2167,11 @@ export default function RoomClient() {
     setShowJumpToLatest(false);
   };
 
+  const latestSubtitle =
+    visibleMessages.length > 0
+      ? visibleMessages[visibleMessages.length - 1]
+      : null;
+
   return (
     <div
       dir={isArabicUi ? "rtl" : "ltr"}
@@ -1860,6 +2242,17 @@ export default function RoomClient() {
 
             {messages.length > 0 && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setSummaryOpen(true)}
+                  aria-label={isArabicUi ? "تلخيص المحادثة" : "Summarize conversation"}
+                  className="inline-flex h-11 min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-full border border-[#A8BDA9] bg-[#DCE8DD]/70 px-2.5 text-xs font-semibold text-[#214536] hover:bg-[#DCE8DD]"
+                >
+                  <SparklesIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">
+                    {isArabicUi ? "ملخص" : "Summarize"}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleCopyTranscript()}
@@ -1963,6 +2356,109 @@ export default function RoomClient() {
         </div>
       </header>
 
+      {/* Mode B WebRTC Video Feed + Live Bilingual Subtitles Overlay */}
+      {(videoEnabled || remoteVideoActive || remoteVideoStream !== null) && (
+        <section
+          aria-label={isArabicUi ? "مكالمة الفيديو والترجمة الفورية" : "Video call and live subtitles"}
+          className="relative mx-3.5 mt-2.5 h-56 sm:h-72 shrink-0 overflow-hidden rounded-[22px] border border-[#315F4A]/35 bg-[#14261E] text-white shadow-[0_12px_28px_-8px_rgba(20,38,30,0.45)]"
+        >
+          {/* Remote full-width video (muted because StereoEngine handles Smart Audio Ducking) */}
+          <video
+            ref={remoteVideoElRef}
+            playsInline
+            autoPlay
+            muted
+            onLoadedMetadata={() => void remoteVideoElRef.current?.play().catch(() => {})}
+            className={`h-full w-full object-cover transition-opacity ${
+              remoteVideoActive || remoteVideoStream !== null ? "opacity-100" : "opacity-0"
+            }`}
+          />
+
+          {!remoteVideoActive && remoteVideoStream === null && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-4 text-center">
+              <VideoOffCamIcon className="w-7 h-7 text-[#A8BDA9]" />
+              <p className="text-xs font-semibold text-[#DCE8DD]">
+                {isArabicUi
+                  ? "كاميرا الشريك مغلقة حالياً"
+                  : "Partner camera is currently off"}
+              </p>
+            </div>
+          )}
+
+          {/* Top-start Video Controls: Live Subtitles CC + Camera Flip */}
+          <div className="absolute top-2.5 start-2.5 z-10 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowVideoSubtitles((s) => !s)}
+              aria-label={
+                isArabicUi ? "إظهار أو إخفاء الترجمة على الفيديو" : "Toggle live video subtitles"
+              }
+              className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-3 text-xs font-bold backdrop-blur-xs transition ${
+                showVideoSubtitles
+                  ? "bg-[#315F4A]/90 text-white"
+                  : "bg-[#242A26]/70 text-[#DCE8DD]"
+              }`}
+            >
+              CC
+            </button>
+
+            {videoEnabled && (
+              <button
+                type="button"
+                onClick={() => void handleFlipCamera()}
+                aria-label={
+                  isArabicUi ? "تبديل الكاميرا الأمامية والخلفية" : "Flip front or rear camera"
+                }
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#242A26]/75 text-white backdrop-blur-xs transition hover:bg-[#315F4A]"
+              >
+                <CameraFlipIcon className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Local PiP Camera Preview (muted) */}
+          {videoEnabled && (
+            <div className="absolute top-2.5 end-2.5 z-10 h-24 w-[68px] sm:h-28 sm:w-20 overflow-hidden rounded-xl border-2 border-white/80 bg-[#242A26] shadow-lg">
+              <video
+                ref={localVideoElRef}
+                playsInline
+                autoPlay
+                muted
+                className={`h-full w-full object-cover ${
+                  cameraFacing === "user" ? "-scale-x-100" : ""
+                }`}
+              />
+            </div>
+          )}
+
+          {/* Live Bilingual Subtitles Overlay */}
+          {showVideoSubtitles && latestSubtitle && (
+            <div className="pointer-events-none absolute inset-x-2.5 bottom-2.5 z-10 rounded-2xl border border-white/15 bg-[#14261E]/85 px-3.5 py-2 backdrop-blur-xs space-y-0.5">
+              <p
+                dir={myLang.rtl ? "rtl" : "ltr"}
+                className="text-xs sm:text-sm font-bold leading-snug text-white line-clamp-2"
+              >
+                {latestSubtitle.sender === role
+                  ? latestSubtitle.sourceText || latestSubtitle.translatedText
+                  : latestSubtitle.translatedText || latestSubtitle.sourceText}
+              </p>
+              {(latestSubtitle.sender === role
+                ? latestSubtitle.translatedText
+                : latestSubtitle.sourceText) && (
+                <p
+                  dir={partnerLang.rtl ? "rtl" : "ltr"}
+                  className="text-[11px] font-medium text-[#DCE8DD] line-clamp-1"
+                >
+                  {latestSubtitle.sender === role
+                    ? latestSubtitle.translatedText
+                    : latestSubtitle.sourceText}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Scrollable Live Chat Transcript (+ QR Invite inside scroll stage so small phones never crush content) */}
       <div
         ref={scrollRef}
@@ -2063,29 +2559,65 @@ export default function RoomClient() {
                         </span>
                       )}
                       {item.isFinal && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleReplayMessage(
-                              item,
-                              myLang.code,
-                              partnerLang.code
-                            )
-                          }
-                          aria-label={
-                            isArabicUi
-                              ? "إعادة تشغيل الصوت"
-                              : "Replay translation audio"
-                          }
-                          className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
-                            isReplaying
-                              ? "border-[#315F4A] bg-[#315F4A] text-white"
-                              : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
-                          }`}
-                        >
-                          <SpeakerPlayIcon className="w-3.5 h-3.5" />
-                          <span>{isArabicUi ? "إعادة" : "Play"}</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic(settings.hapticsEnabled, 8);
+                              toggleSavedPhrase({
+                                sourceText: item.sourceText,
+                                translatedText: item.translatedText,
+                                sourceLang: item.sourceLang,
+                                targetLang: item.targetLang,
+                                modeLabel: isArabicUi ? "الوضع B" : "Mode B",
+                              });
+                            }}
+                            aria-label={isArabicUi ? "حفظ العبارة" : "Save phrase"}
+                            className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition active:scale-95 ${
+                              savedKeys.has(
+                                buildSavedPhraseKey(
+                                  item.sourceText,
+                                  item.translatedText
+                                )
+                              )
+                                ? "border-[#C58B62] bg-[#E8D8BF] text-[#A86D43]"
+                                : "border-[#E2DFD6] bg-[#F5F3ED] text-[#565E58] hover:text-[#A86D43]"
+                            }`}
+                          >
+                            <StarIcon
+                              className="w-3.5 h-3.5"
+                              filled={savedKeys.has(
+                                buildSavedPhraseKey(
+                                  item.sourceText,
+                                  item.translatedText
+                                )
+                              )}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleReplayMessage(
+                                item,
+                                myLang.code,
+                                partnerLang.code
+                              )
+                            }
+                            aria-label={
+                              isArabicUi
+                                ? "إعادة تشغيل الصوت"
+                                : "Replay translation audio"
+                            }
+                            className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
+                              isReplaying
+                                ? "border-[#315F4A] bg-[#315F4A] text-white"
+                                : "border-[#E2DFD6] bg-[#F5F3ED] text-[#315F4A] hover:bg-[#DCE8DD]"
+                            }`}
+                          >
+                            <SpeakerPlayIcon className="w-3.5 h-3.5" />
+                            <span>{isArabicUi ? "إعادة" : "Play"}</span>
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -2128,6 +2660,47 @@ export default function RoomClient() {
         muted
         className="hidden"
       />
+
+      {/* Compact Translated Text Chat Input Bar */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleSendTextChat(myLang.code, partnerLang.code);
+        }}
+        className="flex items-center gap-2 border-t border-[#E2DFD6] bg-[#F5F3ED]/90 px-3.5 py-2"
+      >
+        <input
+          type="text"
+          value={textChatInput}
+          onChange={(e) => setTextChatInput(e.target.value)}
+          disabled={sendingTextChat}
+          maxLength={2000}
+          placeholder={
+            isArabicUi
+              ? `اكتب رسالة أو عنواناً بـ ${getLangName(myLang.code, myLang.label)}...`
+              : `Type an address, number, or message in ${myLang.label}...`
+          }
+          aria-label={isArabicUi ? "إرسال رسالة نصية مترجمة" : "Send translated text message"}
+          className="min-h-[44px] flex-1 rounded-full border border-[#E2DFD6] bg-white px-4 text-xs sm:text-sm text-[#242A26] placeholder:text-[#777F79] outline-none focus:border-[#315F4A]"
+        />
+        <button
+          type="submit"
+          disabled={sendingTextChat || !textChatInput.trim()}
+          aria-label={isArabicUi ? "ترجمة وإرسال" : "Translate and send"}
+          className="inline-flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-full bg-[#315F4A] px-3.5 text-xs font-semibold text-white transition hover:bg-[#214536] active:scale-95 disabled:opacity-45"
+        >
+          <SendArrowIcon className="w-4 h-4" />
+          <span className="hidden sm:inline">
+            {sendingTextChat
+              ? isArabicUi
+                ? "يرسل..."
+                : "Sending"
+              : isArabicUi
+                ? "إرسال"
+                : "Send"}
+          </span>
+        </button>
+      </form>
 
       {/* Live Voice Call & Translation Control Bar */}
       <footer className="border-t border-[#E2DFD6] bg-white px-3.5 py-2.5 space-y-2 shadow-[0_-4px_20px_-8px_rgba(33,69,54,0.1)]">
@@ -2190,9 +2763,13 @@ export default function RoomClient() {
                         ? "جاري إعادة التوصيل..."
                         : "Reconnecting..."
                       : callState === "connecting"
-                        ? isArabicUi
-                          ? "جاري ربط المكالمة..."
-                          : "Connecting call..."
+                        ? iceState === "checking"
+                          ? isArabicUi
+                            ? "جاري فحص مسار الاتصال..."
+                            : "Checking connection..."
+                          : isArabicUi
+                            ? "جاري ربط المكالمة..."
+                            : "Connecting call..."
                         : isRunning && isMuted
                           ? isArabicUi
                             ? "الميكروفون مكتوم"
@@ -2278,7 +2855,7 @@ export default function RoomClient() {
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {isRunning && (
               <button
                 type="button"
@@ -2299,6 +2876,53 @@ export default function RoomClient() {
                       ? "تشغيل المكالمة"
                       : "Turn On Voice"}
                 </span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void handleToggleVideo()}
+              aria-label={
+                videoEnabled
+                  ? isArabicUi
+                    ? "إيقاف الفيديو"
+                    : "Turn off video"
+                  : isArabicUi
+                    ? "تشغيل الفيديو"
+                    : "Turn on video"
+              }
+              className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition active:scale-[0.98] ${
+                videoEnabled
+                  ? "border-[#315F4A] bg-[#214536] text-white"
+                  : "border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
+              }`}
+            >
+              {videoEnabled ? (
+                <VideoCamIcon className="w-3.5 h-3.5" />
+              ) : (
+                <VideoOffCamIcon className="w-3.5 h-3.5 text-[#565E58]" />
+              )}
+              <span>
+                {videoEnabled
+                  ? isArabicUi
+                    ? "فيديو مفعّل"
+                    : "Video On"
+                  : isArabicUi
+                    ? "فيديو"
+                    : "Video"}
+              </span>
+            </button>
+
+            {videoEnabled && (
+              <button
+                type="button"
+                onClick={() => void handleFlipCamera()}
+                aria-label={
+                  isArabicUi ? "تبديل الكاميرا" : "Flip camera"
+                }
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#E2DFD6] bg-[#F5F3ED] text-[#242A26] hover:bg-[#DCE8DD]/60"
+              >
+                <CameraFlipIcon className="w-4 h-4 text-[#315F4A]" />
               </button>
             )}
 
@@ -2618,6 +3242,22 @@ export default function RoomClient() {
         onClose={() => setEarbudTestOpen(false)}
         langALabel={myLang.label}
         langBLabel={partnerLang.label}
+      />
+
+      <ConversationSummaryModal
+        isOpen={summaryOpen}
+        onClose={() => setSummaryOpen(false)}
+        turns={messages.map((m) => ({
+          speakerLabel:
+            m.sender === role
+              ? `You (${myLang.label} → ${partnerLang.label})`
+              : `Partner (${partnerLang.label} → ${myLang.label})`,
+          sourceText: m.sourceText,
+          translatedText: m.translatedText,
+        }))}
+        langALabel={myLang.label}
+        langBLabel={partnerLang.label}
+        isArabicUi={isArabicUi}
       />
     </div>
   );

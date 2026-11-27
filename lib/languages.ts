@@ -6,17 +6,25 @@ export interface SupportedLanguage {
 }
 
 export const SUPPORTED_LANGUAGES: readonly SupportedLanguage[] = [
-  { code: "ar", label: "Arabic", native: "العربية", rtl: true },
   { code: "en", label: "English", native: "English" },
-  { code: "es", label: "Spanish", native: "Español" },
+  { code: "ar", label: "Arabic", native: "العربية", rtl: true },
+  {
+    code: "ar-dz",
+    label: "Algerian Darija",
+    native: "الدارجة الجزائرية",
+    rtl: true,
+  },
   { code: "fr", label: "French", native: "Français" },
-  { code: "de", label: "German", native: "Deutsch" },
-  { code: "it", label: "Italian", native: "Italiano" },
-  { code: "pt", label: "Portuguese", native: "Português" },
+  { code: "es", label: "Spanish", native: "Español" },
   { code: "tr", label: "Turkish", native: "Türkçe" },
+  { code: "it", label: "Italian", native: "Italiano" },
+  { code: "de", label: "German", native: "Deutsch" },
+  { code: "pt", label: "Portuguese", native: "Português" },
   { code: "ja", label: "Japanese", native: "日本語" },
-  { code: "ko", label: "Korean", native: "한국어" },
   { code: "zh", label: "Mandarin Chinese", native: "中文" },
+  { code: "ko", label: "Korean", native: "한국어" },
+  { code: "ms", label: "Malay", native: "Bahasa Melayu" },
+  { code: "th", label: "Thai", native: "ไทย" },
   { code: "hi", label: "Hindi", native: "हिन्दी" },
   { code: "ur", label: "Urdu", native: "اردو", rtl: true },
 ] as const;
@@ -40,11 +48,16 @@ export function buildInterpreterSystemPrompt(
   langA: string,
   langB: string
 ): string {
+  const hasDarijaTarget =
+    /darija|algerian/i.test(langA) || /darija|algerian/i.test(langB);
   const isArabicInvolved =
-    /arabic/i.test(langA) || /arabic/i.test(langB);
-  const dialectGuidance = isArabicInvolved
-    ? ` For Arabic, understand both Modern Standard Arabic (Fusha) and spoken regional dialects—especially North African / Algerian Darija (including negated forms like ماشي / ما...ش / والو, Maghrebi vocabulary, and French/English loanwords)—effortlessly; when translating into Arabic, speak in clear Modern Standard Arabic (Fusha) using standard Arabic vocabulary rather than regional dialect slang or transliterated foreign loanwords.`
-    : "";
+    hasDarijaTarget || /arabic/i.test(langA) || /arabic/i.test(langB);
+
+  const dialectGuidance = hasDarijaTarget
+    ? ` For Algerian Darija, deeply understand everyday Algerian speech including French and English loanwords, code-switching (e.g., طاكسي، شومبرة، لاكليم، روطار، كونتور، ديجونكتور), and Maghrebi negative markers (ما...ش / ماشي / والو / بلا); when translating INTO Algerian Darija, speak naturally in warm, authentic everyday Algerian Darija so a local listener understands effortlessly—when translating FROM Algerian Darija into ${/darija|algerian/i.test(langA) ? langB : langA}, translate strictly into natural idiomatic ${/darija|algerian/i.test(langA) ? langB : langA}.`
+    : isArabicInvolved
+      ? ` For Arabic, understand both Modern Standard Arabic (Fusha) and spoken regional dialects—especially North African / Algerian Darija (including negated forms like ماشي / ما...ش / والو, Maghrebi vocabulary, and French/English loanwords)—effortlessly; when translating into Arabic, speak in clear Modern Standard Arabic (Fusha) using standard Arabic vocabulary rather than regional dialect slang or transliterated foreign loanwords.`
+      : "";
 
   return (
     `You are a professional simultaneous voice interpreter between ${langA} and ${langB}.${dialectGuidance} ` +
@@ -59,8 +72,10 @@ export function buildInterpreterSystemPrompt(
 
 const SCRIPT_PATTERNS: Record<string, RegExp> = {
   ar: /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g,
+  "ar-dz": /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g,
   ur: /[\u0600-\u06FF\u0750-\u077F]/g,
   hi: /[\u0900-\u097F]/g,
+  th: /[\u0E00-\u0E7F]/g,
   ja: /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g,
   ko: /[\uAC00-\uD7AF\u1100-\u11FF]/g,
   zh: /[\u4E00-\u9FFF]/g,
@@ -75,6 +90,7 @@ const STOPWORDS: Record<string, RegExp> = {
   it: /\b(il|lo|la|i|gli|le|un|una|che|e|è|sono|di|a|da|in|per|con|ciao|grazie|come|dove|quando|io|tu|noi|sì|no|non|ma|molto|bene|questo|quello|mio)\b/gi,
   pt: /\b(o|a|os|as|um|uma|que|e|é|são|de|em|por|para|com|obrigado|obrigada|olá|ola|como|onde|quando|não|nao|sim|mas|eu|você|muito|bem|meu|sua)\b/gi,
   tr: /\b(ve|bir|bu|şu|o|için|ne|nerede|nasıl|ne zaman|teşekkür|teşekkürler|merhaba|evet|hayır|ben|sen|biz|var|yok|değil|çok|iyi|lütfen|ile|ama|mı|mi)\b/gi,
+  ms: /\b(saya|anda|terima|kasih|selamat|tolong|mana|berapa|ini|itu|tidur|makan|air|jalan|bilik|lapangan|terbang|boleh|mahu|ya|tidak)\b/gi,
 };
 
 const DIACRITIC_BONUSES: Record<string, RegExp> = {

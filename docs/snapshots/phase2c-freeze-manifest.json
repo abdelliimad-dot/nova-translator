@@ -1,0 +1,192 @@
+{
+  "frozenPhase": "Phase 2C",
+  "frozenAt": "2026-11-26T08:30:00Z",
+  "gitHeadCommit": "fc1bba5dbc94c6986e4d514646f7a958f0bec0dc",
+  "model": "models/gemini-2.5-flash-native-audio-latest",
+  "promptFunction": {
+    "file": "lib/languages.ts",
+    "symbol": "buildInterpreterSystemPrompt",
+    "sha256": "46533177d937d0dc6a14883aee6f0fc0906fd7456d63c78c64da6973e5d69106",
+    "baselineHeadSha256": "dfc67700f973649ef92c31cd1eba7f8270867ca1756bd7eba776bea93dbe583f",
+    "renderedCharLengths": {
+      "Arabic<->English": 1662,
+      "Arabic<->French": 1659,
+      "French<->English": 1233
+    },
+    "renderedPhase2BCharLengths": {
+      "Arabic<->English": 1498,
+      "Arabic<->French": 1495,
+      "French<->English": 1179
+    },
+    "renderedBaselineCharLengths": {
+      "Arabic<->English": 1498,
+      "Arabic<->French": 1495,
+      "French<->English": 1268
+    }
+  },
+  "frozenFiles": [
+    {
+      "path": "lib/languages.ts",
+      "bytes": 8333,
+      "sha256": "744cacad1c6176f7ad950d5f9d19578525dfe461828af2d1dc1b69d1ee2b4095"
+    },
+    {
+      "path": "app/api/session/route.ts",
+      "bytes": 6262,
+      "sha256": "84357714c936c5c3c41962061fd8ed6fe17acaa164d3af053fa679505424760e"
+    },
+    {
+      "path": "lib/ai/geminiLiveClient.ts",
+      "bytes": 19067,
+      "sha256": "eb812f8940511756fe054ad3b9a248aa65fff81baa221b4abad8347f3827d09c"
+    },
+    {
+      "path": "scripts/datasets/phase2a-benchmark-108.mjs",
+      "bytes": 58286,
+      "sha256": "b2f278c262051ad28075bcc3bf8f7ce843c1dbff7b1949954a911082207d9371"
+    },
+    {
+      "path": "scripts/run-phase2a-benchmark.mjs",
+      "bytes": 22570,
+      "sha256": "61d19f34587a3bd4065012ca8bc75a058eef0fe8e79463ab1b2c836fdd89970d"
+    },
+    {
+      "path": "scripts/phase2c-repeatability.test.mjs",
+      "bytes": 12368,
+      "sha256": "dec4fd7bd6f0cf4b30cf2571d3cc83b64e443547754623335c6346bd8e2b112b"
+    },
+    {
+      "path": "docs/benchmark-phase2a-baseline.json",
+      "bytes": 116000,
+      "sha256": "d844b6923c0e21d4ab5905cf243cafb1b5870aa3800e7774339e59696f5f2302"
+    },
+    {
+      "path": "docs/benchmark-phase2a-improved.json",
+      "bytes": 113325,
+      "sha256": "06f89ddf67a63b910e17e0638ed6edf0a7b8ff9ac05e1745b8e65a591dbaecca"
+    },
+    {
+      "path": "docs/benchmark-phase2a-phase2b.json",
+      "bytes": 110707,
+      "sha256": "fbbac4a33b29813e490e244059b6093a7ba81cd64fdf4c9d8fae233518599afe"
+    },
+    {
+      "path": "docs/benchmark-phase2a-phase2c.json",
+      "bytes": 106549,
+      "sha256": "4a5e3fc7b98187d1808bf0789c2f9c6c5ad35a3f2fb36c557ec1edabc7e511e5"
+    },
+    {
+      "path": "docs/repeatability-phase2b-repeat.json",
+      "bytes": 16572,
+      "sha256": "28178736f691d0963d67d18052645e7288884d3162aa04462f1a0f2357a96a5b"
+    },
+    {
+      "path": "docs/repeatability-phase2c-repeat.json",
+      "bytes": 16257,
+      "sha256": "e288539cc9dca6fc7d168b7bce0039ad825fff6a1991798951caac62e48a4787"
+    },
+    {
+      "path": "docs/PHASE_2C_TRANSLATION_REGRESSION_RECOVERY.md",
+      "bytes": 25256,
+      "sha256": "a8ea237ba81af1b28c7e5bc672e3e57a067939289116fee000f82a210a8523b1"
+    }
+  ],
+  "benchmarkSummary": {
+    "tag": "phase2c",
+    "timestamp": "2026-11-26T06:39:59.090Z",
+    "totalCases": 108,
+    "passedCases": 106,
+    "strictPassRatePct": 98.1,
+    "latencyBreakdown": {
+      "tokenMintMsStats": {
+        "count": 12,
+        "avg": 513,
+        "p50": 487,
+        "p95": 837,
+        "min": 321,
+        "max": 837
+      },
+      "wsSetupMsStats": {
+        "count": 12,
+        "avg": 887,
+        "p50": 901,
+        "p95": 1174,
+        "min": 622,
+        "max": 1174
+      },
+      "geminiTtfaMsStats": {
+        "count": 106,
+        "avg": 1407,
+        "p50": 1261,
+        "p95": 2300,
+        "min": 872,
+        "max": 2817
+      },
+      "relaySseMsStats": {
+        "count": 15,
+        "avg": 25,
+        "p50": 28.33,
+        "p95": 40.86,
+        "min": 11.28,
+        "max": 40.86
+      },
+      "pcmDecode3840AvgMs": 0.0275,
+      "dspConstantsMs": {
+        "vadFrameMs": 32,
+        "vadMinSpeechBalancedMs": 320,
+        "vadEndRedemptionMs": 520,
+        "pttEndDelayMs": 0,
+        "stereoEngineJitterMs": 45
+      }
+    }
+  },
+  "phase2bSummary": {
+    "tag": "phase2b",
+    "timestamp": "2026-11-26T06:12:35.537Z",
+    "totalCases": 108,
+    "passedCases": 101,
+    "strictPassRatePct": 93.5,
+    "latencyBreakdown": {
+      "tokenMintMsStats": {
+        "count": 12,
+        "avg": 441,
+        "p50": 464,
+        "p95": 707,
+        "min": 269,
+        "max": 707
+      },
+      "wsSetupMsStats": {
+        "count": 12,
+        "avg": 867,
+        "p50": 859,
+        "p95": 1245,
+        "min": 652,
+        "max": 1245
+      },
+      "geminiTtfaMsStats": {
+        "count": 106,
+        "avg": 1215,
+        "p50": 1080,
+        "p95": 1736,
+        "min": 880,
+        "max": 2402
+      },
+      "relaySseMsStats": {
+        "count": 15,
+        "avg": 28,
+        "p50": 26.92,
+        "p95": 56.35,
+        "min": 10.5,
+        "max": 56.35
+      },
+      "pcmDecode3840AvgMs": 0.0407,
+      "dspConstantsMs": {
+        "vadFrameMs": 32,
+        "vadMinSpeechBalancedMs": 320,
+        "vadEndRedemptionMs": 520,
+        "pttEndDelayMs": 0,
+        "stereoEngineJitterMs": 45
+      }
+    }
+  }
+}

@@ -33,7 +33,8 @@ export type WebRtcSignalKind =
   | "answer"
   | "ice-candidate"
   | "call-ready"
-  | "hangup";
+  | "hangup"
+  | "video-state";
 
 export interface RelayedSignalPacket {
   seq: number;
@@ -127,6 +128,7 @@ const ALLOWED_SIGNAL_KINDS = new Set<WebRtcSignalKind>([
   "ice-candidate",
   "call-ready",
   "hangup",
+  "video-state",
 ]);
 
 const globalForRooms = globalThis as unknown as {

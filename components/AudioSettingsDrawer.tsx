@@ -22,6 +22,7 @@ import {
   type NovaVoiceName,
   type VadSensitivity,
 } from "@/lib/settingsStore";
+import { APP_VERSION } from "@/lib/version";
 
 interface AudioSettingsDrawerProps {
   isOpen: boolean;
@@ -590,6 +591,13 @@ export default function AudioSettingsDrawer({
               {dict.settingsFields.clearSessionData}
             </button>
           </section>
+
+          <p
+            dir="ltr"
+            className="pb-2 text-center font-mono text-[11px] font-medium tracking-wide text-[#777F79]"
+          >
+            NOVA v{APP_VERSION}
+          </p>
         </div>
       </div>
     </div>

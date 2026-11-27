@@ -1,0 +1,611 @@
+{
+  "tag": "phase2c-repeat",
+  "timestamp": "2026-11-26T06:27:49.455Z",
+  "repeats": 3,
+  "report": [
+    {
+      "id": 17,
+      "category": "Darija Idioms",
+      "sourceLang": "ar",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "I'd be happy to, I'll send you all the papers now.",
+          "audioBytes": 140160,
+          "ttfaMs": 2545,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "I'd be happy to, I'll send you all the papers right now.",
+          "audioBytes": 145920,
+          "ttfaMs": 997,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "I'd be happy to. I'll send all the papers to you now.",
+          "audioBytes": 155520,
+          "ttfaMs": 1392,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "category": "Darija+FR Mix",
+      "sourceLang": "ar",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "The file is missing the residency certificate; you need to bring it tomorrow.",
+          "audioBytes": 213120,
+          "ttfaMs": 1648,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "The file is missing the residency certificate; you need to bring it tomorrow.",
+          "audioBytes": 213120,
+          "ttfaMs": 1341,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "The file is missing the residency certificate; you need to bring it tomorrow.",
+          "audioBytes": 213120,
+          "ttfaMs": 985,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "category": "Darija Context",
+      "sourceLang": "ar",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "Why are you silent? Did something happen at work?",
+          "audioBytes": 163200,
+          "ttfaMs": 1142,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "Why are you silent? Did something happen at work?",
+          "audioBytes": 163200,
+          "ttfaMs": 1247,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "Why are you silent? Did something happen at work?",
+          "audioBytes": 107520,
+          "ttfaMs": 1079,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "category": "French Conversational",
+      "sourceLang": "fr",
+      "targetLang": "ar",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "عفوا، هل هذا المقعد مشغول",
+          "audioBytes": 122880,
+          "ttfaMs": 1179,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "عفوا، هل هذا المكان مشغول",
+          "audioBytes": 103680,
+          "ttfaMs": 1055,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "عفوا، هل هذا المقعد مشغول",
+          "audioBytes": 122880,
+          "ttfaMs": 1162,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "category": "French Conversational",
+      "sourceLang": "fr",
+      "targetLang": "ar",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "ممكن تعملي إيصال بختم الفندق؟",
+          "audioBytes": 124800,
+          "ttfaMs": 1062,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "ممكن تعملي لي فاتورة مع ختم الفندق؟",
+          "audioBytes": 128640,
+          "ttfaMs": 1911,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "ممكن تعملي إيصال بختم الفندق؟",
+          "audioBytes": 124800,
+          "ttfaMs": 1009,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 55,
+      "category": "French+Darija Mix",
+      "sourceLang": "fr",
+      "targetLang": "en",
+      "passCount": 0,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": false,
+          "outputText": "Honestly, that's too expensive, seriously, give me a better price.",
+          "audioBytes": 205440,
+          "ttfaMs": 1026,
+          "comp": "2/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": false,
+          "outputText": "Honestly, that's way too expensive, man, give me a discount.",
+          "audioBytes": 195840,
+          "ttfaMs": 1017,
+          "comp": "1/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": false,
+          "outputText": "Honestly, that's too expensive, seriously, give me a better price.",
+          "audioBytes": 205440,
+          "ttfaMs": 1551,
+          "comp": "2/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 64,
+      "category": "English Idioms",
+      "sourceLang": "en",
+      "targetLang": "ar",
+      "passCount": 2,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": false,
+          "outputText": "ما تقلقش، ندبروها كي نوصلوا للفندق.",
+          "audioBytes": 153600,
+          "ttfaMs": 1923,
+          "comp": "1/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "ما تقلقش، سنتدبر الأمر عندما نصل إلى الفندق.",
+          "audioBytes": 176640,
+          "ttfaMs": 1062,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "ما تقلقش، سنتدبر الأمر عندما نصل إلى الفندق.",
+          "audioBytes": 176640,
+          "ttfaMs": 1263,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 65,
+      "category": "English Idioms",
+      "sourceLang": "en",
+      "targetLang": "fr",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "Arrêtons-nous là et reprenons cela demain matin à tête reposée.",
+          "audioBytes": 140160,
+          "ttfaMs": 1066,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "Arrêtons-nous là et reprenons tout ça demain matin à tête reposée.",
+          "audioBytes": 151680,
+          "ttfaMs": 1140,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "Arrêtons-nous là et reprenons cela demain matin à tête reposée.",
+          "audioBytes": 144000,
+          "ttfaMs": 1138,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 78,
+      "category": "English Context",
+      "sourceLang": "en",
+      "targetLang": "ar",
+      "passCount": 0,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": false,
+          "outputText": "ممكن نشحن تليفوني من وراء الكاونتر، مش بطاقة الائتمان تاعتي هلق؟",
+          "audioBytes": 209280,
+          "ttfaMs": 1149,
+          "comp": "2/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": false,
+          "outputText": "ممكن نشحن تليفوني من وراء الكاونتر، مش بطاقة الائتمان تاعتي هلق؟",
+          "audioBytes": 209280,
+          "ttfaMs": 1953,
+          "comp": "2/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": false,
+          "outputText": "ممكن نشحن تليفوني من وراء الكاونتر، مش بطاقة الائتمان تاعتي هلق؟",
+          "audioBytes": 209280,
+          "ttfaMs": 1050,
+          "comp": "2/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 81,
+      "category": "Difficult Short",
+      "sourceLang": "ar",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "How much?",
+          "audioBytes": 46080,
+          "ttfaMs": 993,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "How much?",
+          "audioBytes": 42240,
+          "ttfaMs": 1219,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "How much?",
+          "audioBytes": 46080,
+          "ttfaMs": 957,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 83,
+      "category": "Difficult Short",
+      "sourceLang": "fr",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "Totally!",
+          "audioBytes": 53760,
+          "ttfaMs": 1599,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "Totally!",
+          "audioBytes": 46080,
+          "ttfaMs": 1236,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "Totally!",
+          "audioBytes": 53760,
+          "ttfaMs": 922,
+          "comp": "1/1",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "category": "Difficult Negation",
+      "sourceLang": "ar",
+      "targetLang": "en",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "It wasn't me who forgot the key, it's still at the office.",
+          "audioBytes": 176640,
+          "ttfaMs": 1638,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "It wasn't me who forgot the key, it's still at the office.",
+          "audioBytes": 182400,
+          "ttfaMs": 1736,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "It wasn't me who left the key, it's still in the office.",
+          "audioBytes": 176640,
+          "ttfaMs": 1041,
+          "comp": "2/2",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "category": "Difficult Negation",
+      "sourceLang": "en",
+      "targetLang": "ar",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 3,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "لا نقبل النقد بعد الساعه الثامنه مساءً، بطاقات مصرفيه فقط.",
+          "audioBytes": 245760,
+          "ttfaMs": 1252,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "لا نقبل الدفع نقداً بعد الساعة الثامنة مساءً، فقط بطاقات مصرفية.",
+          "audioBytes": 261120,
+          "ttfaMs": 1047,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "لا نقبل الدفع نقداً بعد الساعة الثامنة مساءً، فقط بطاقات مصرفية.",
+          "audioBytes": 261120,
+          "ttfaMs": 1008,
+          "comp": "3/3",
+          "hasAudio": true,
+          "negationOk": true,
+          "langPurityOk": true
+        }
+      ]
+    },
+    {
+      "id": 107,
+      "category": "Difficult Silence/Noise",
+      "sourceLang": "audio",
+      "targetLang": "none",
+      "passCount": 3,
+      "repeats": 3,
+      "audioCount": 0,
+      "runs": [
+        {
+          "rep": 1,
+          "passed": true,
+          "outputText": "",
+          "audioBytes": 0,
+          "ttfaMs": null
+        },
+        {
+          "rep": 2,
+          "passed": true,
+          "outputText": "",
+          "audioBytes": 0,
+          "ttfaMs": null
+        },
+        {
+          "rep": 3,
+          "passed": true,
+          "outputText": "",
+          "audioBytes": 0,
+          "ttfaMs": null
+        }
+      ]
+    }
+  ]
+}

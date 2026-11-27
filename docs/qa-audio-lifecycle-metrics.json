@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-11-26T11:10:23.952Z",
+  "audioScheduleLatencyMsStats": {
+    "count": 300,
+    "avg": 0.087,
+    "p50": 0.058,
+    "p95": 0.162,
+    "min": 0.035,
+    "max": 4.751
+  },
+  "sessionMintMsStats": {
+    "count": 5,
+    "avg": 369.202,
+    "p50": 380.482,
+    "p95": 536.036,
+    "min": 253.844,
+    "max": 536.036
+  },
+  "relayPostMsStats": {
+    "count": 10,
+    "avg": 9.709,
+    "p50": 9.33,
+    "p95": 12.063,
+    "min": 8.601,
+    "max": 12.063
+  },
+  "stressCycles": 30,
+  "stressTurns": 300,
+  "heapDeltaKbDuring30Cycles": 1557,
+  "leakedVisibilityListeners": 0,
+  "allPassed": true
+}

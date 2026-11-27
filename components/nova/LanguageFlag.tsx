@@ -29,7 +29,7 @@ export default function LanguageFlag({
         </clipPath>
       </defs>
       <g clipPath={`url(#flag-${norm}-${size})`}>
-        {norm === "ar" && (
+        {(norm === "ar" || norm === "ar-dz") && (
           <>
             <rect x="0" y="0" width="12" height="24" fill="#1E6B47" />
             <rect x="12" y="0" width="12" height="24" fill="#FFFFFF" />
@@ -127,6 +127,32 @@ export default function LanguageFlag({
           </>
         )}
 
+        {norm === "ms" && (
+          <>
+            <rect x="0" y="0" width="24" height="24" fill="#FFFFFF" />
+            <rect x="0" y="0" width="24" height="3.5" fill="#DC2626" />
+            <rect x="0" y="7" width="24" height="3.5" fill="#DC2626" />
+            <rect x="0" y="14" width="24" height="3.5" fill="#DC2626" />
+            <rect x="0" y="21" width="24" height="3" fill="#DC2626" />
+            <rect x="0" y="0" width="13" height="13" fill="#1E3A8A" />
+            <path
+              d="M7.2 3.8a3.2 3.2 0 1 0 0 5.4 2.5 2.5 0 1 1 0-5.4Z"
+              fill="#FBBF24"
+            />
+            <circle cx="8.8" cy="6.5" r="1.2" fill="#FBBF24" />
+          </>
+        )}
+
+        {norm === "th" && (
+          <>
+            <rect x="0" y="0" width="24" height="4" fill="#DC2626" />
+            <rect x="0" y="4" width="24" height="4" fill="#FFFFFF" />
+            <rect x="0" y="8" width="24" height="8" fill="#1E3A8A" />
+            <rect x="0" y="16" width="24" height="4" fill="#FFFFFF" />
+            <rect x="0" y="20" width="24" height="4" fill="#DC2626" />
+          </>
+        )}
+
         {norm === "hi" && (
           <>
             <rect x="0" y="0" width="24" height="8" fill="#F97316" />
@@ -149,6 +175,7 @@ export default function LanguageFlag({
 
         {![
           "ar",
+          "ar-dz",
           "en",
           "fr",
           "tr",
@@ -159,6 +186,8 @@ export default function LanguageFlag({
           "ja",
           "ko",
           "zh",
+          "ms",
+          "th",
           "hi",
           "ur",
         ].includes(norm) && (

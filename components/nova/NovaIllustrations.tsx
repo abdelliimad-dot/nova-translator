@@ -327,3 +327,28 @@ export function PhoneSpeakerIllustration() {
     </div>
   );
 }
+
+export function CameraTranslateIllustration() {
+  return (
+    <div
+      className="relative flex h-20 w-20 sm:h-24 sm:w-24 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#DCE8DD]/80 via-[#F5F3ED] to-[#E8D8BF]/65 p-2 overflow-hidden"
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 96 96" fill="none" className="h-full w-full">
+        {/* Viewfinder corners */}
+        <path d="M16 28V20a4 4 0 0 1 4-4h8" stroke="#315F4A" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M68 16h8a4 4 0 0 1 4 4v8" stroke="#315F4A" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M16 68v8a4 4 0 0 0 4 4h8" stroke="#315F4A" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M68 80h8a4 4 0 0 0 4-4v-8" stroke="#315F4A" strokeWidth="2.4" strokeLinecap="round" />
+        {/* Document/Menu sheet inside scanner */}
+        <rect x="27" y="25" width="42" height="46" rx="7" fill="#FFFFFF" stroke="#E2DFD6" strokeWidth="1.8" />
+        <rect x="34" y="34" width="20" height="3.2" rx="1.6" fill="#214536" />
+        <rect x="34" y="42" width="28" height="2.8" rx="1.4" fill="#A8BDA9" />
+        <rect x="34" y="49" width="22" height="2.8" rx="1.4" fill="#A8BDA9" />
+        <rect x="34" y="57" width="16" height="3.2" rx="1.6" fill="#A86D43" />
+        {/* Laser scan line */}
+        <path d="M23 46h50" stroke="#4C8062" strokeWidth="2" strokeLinecap="round" strokeDasharray="3 3" />
+      </svg>
+    </div>
+  );
+}

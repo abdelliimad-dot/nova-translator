@@ -22,9 +22,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NOVA — Real-Time AI Translation",
+  title: "NOVA — AI Travel Interpreter",
   description:
-    "Understand each other. Real-time AI voice translation for shared earbuds and two-phone rooms.",
+    "Speak anywhere. Understand everyone. AI travel interpreter for live conversations, camera menu translation, and offline travel phrases.",
   applicationName: "NOVA",
   appleWebApp: {
     capable: true,

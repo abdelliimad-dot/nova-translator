@@ -18,8 +18,9 @@ import {
 const MAX_RELAY_BODY_BYTES = 131_072; // 128 KB max JSON payload
 
 // Single-process sliding-window rate limiter per participant credential.
+// Sized to comfortably support simultaneous PCM16 audio streaming + transcripts + ICE/SDP signaling.
 const relayLimiterByCred = createRateLimiter({
-  maxRequests: 240,
+  maxRequests: 900,
   windowMs: 60 * 1000,
 });
 
@@ -141,7 +142,8 @@ export async function POST(
     body.kind === "answer" ||
     body.kind === "ice-candidate" ||
     body.kind === "call-ready" ||
-    body.kind === "hangup"
+    body.kind === "hangup" ||
+    body.kind === "video-state"
   ) {
     const signalKind =
       body.kind === "webrtc-signal" ? body.signalKind : body.kind;
